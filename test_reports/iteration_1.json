@@ -1,0 +1,49 @@
+{
+  "summary": "First-run full backend + spot-check UI testing of StaffBook SaaS. Executed 23 pytest API tests (plus 8 pre-existing engine unit tests) all passing: auth/signup/login/me/recovery/brute-force lockout, cross-tenant isolation (403/404), owner cannot access /api/admin/*, 100-staff limit via mark-as-left slot-free (full 100 cap not run under slow marker to save time), payment flow (partial pay, duplicate client_ref 409, over-balance 422, reverse txn restores balance), attendance upsert/delete with late-fine calc, advances+fines create/reverse, dashboard shape and all 8 reports + CSV, super-admin stats/deactivate/reactivate with audit entries + 403 blocking of deactivated owner, staff login creation and /me/staff scoping with 403 on owner-only endpoints. Playwright UI smoke: super-admin logs in -> /admin page with stats and audit; owner signup -> onboarding wizard (5 steps) -> dashboard with KPI cards and quick actions; mobile 390px renders bottom nav (Dashboard/Staff/Attendance/Payments/More) and compact cards. No JS console errors on login/signup/dashboard/mobile. All test data cleaned (TEST_* businesses + related records + login_attempts).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/login", "issue": "Brute-force lockout triggers only after the 6th failed attempt (not the 5th). _fail with return_document=True (AFTER) increments then checks count>=5 after the 5th attempt completes, so the 429 only surfaces on request #6+. Behaviour is safe but off-by-one vs documented 'lock after 5 wrong attempts'."},
+      {"endpoint": "/api/transactions/{tid}/reverse", "issue": "find_one_and_update default return_document is BEFORE, so `res` holds the pre-update document (status='valid'); works today but relying on BEFORE is fragile. Consider ReturnDocument.AFTER or re-reading explicitly."},
+      {"endpoint": "/api/attendance (PUT)", "issue": "Enforces attendance.unique(staff_id,date) but DEL check only ensures the containing period is not fully paid; EDIT (status change) is also blocked by ensure_period_open, which matches the spec; worth adding a backend test for the edit-blocked-after-paid case (not covered in this iteration)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login page (desktop)", "issues": ["Mobile number input not type=tel; keyboard on mobile browsers won't auto-switch to numeric. Consider inputMode='numeric' or type='tel' on PhoneInput."]},
+      {"screen": "Signup", "issues": ["Security question field uses a <select> (testid signup-question-select) but auth-testing docs and test-id registry imply free-text. Current UX is fine; just document it."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_staffbook_api.py",
+    "/app/backend/tests/test_engine.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: tighten brute-force lockout to trip on the 5th failed attempt (not 6th) to match the stated spec.",
+    "Optional: in reverse_txn, use ReturnDocument.AFTER or re-fetch to be explicit.",
+    "Optional: add inputMode='numeric'/type='tel' on PhoneInput for mobile browsers."
+  ],
+  "critical_code_review_comments": [
+    "server.py CORS: allow_credentials=False but CORS_ORIGINS defaults to '*' (currently correct since cookies aren't used; auth is Bearer token in localStorage).",
+    "services.sync_obligations swallows BulkWriteError silently; fine for idempotency via unique index (staff_id, period_start) but any non-duplicate errors are hidden. Consider logging.",
+    "routes_auth._fail uses return_document=True -> AFTER; combined with threshold check this causes 6-attempt lockout (see minor issue).",
+    "routes_pay.reverse_txn relies on find_one_and_update default BEFORE (needs the pre-update obligation_id); correct but fragile.",
+    "No rate-limit on signup / recovery/question endpoints (recovery/reset is locked via login_attempts, but recovery/question will reveal account existence; minor info leak).",
+    "mongosh query failed on single-line .map due to projection returning cursor; already worked around with .toArray()."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_staffbook_api.py (new)"
+  ],
+  "success_rate": {"backend": "100% (31/31 incl. engine tests)", "frontend": "100% on smoke paths (login, admin, signup+onboarding+dashboard, mobile)"},
+  "test_credentials": "Super admin phone 8950771876 pw @Aayush_0512 (seeded). Owners signed up with random 9XXXXXXXXX phones and password 'Password123!'; all with business_name prefix TEST_* and deleted after run.",
+  "seed_data_creation": "Created ~11 TEST_ businesses + related staff/obligations/transactions during pytest and UI runs. All deleted (0 residual). super_admin preserved (1).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest uses -n 2 --dist loadscope (set in pytest.ini). Run with `cd /app/backend && python -m pytest tests/ -v`. The 100-staff cap test is gated behind pytest mark 'slow' (not registered; just filtered via -m 'not slow'). Preview URL is https://staffbook-preview.preview.emergentagent.com and auth is Bearer token (localStorage key sb_token). Dates in IST. Super admin phone +918950771876 / @Aayush_0512. Use random 9-prefixed phones; business names must start with TEST_ and get wiped. UI: data-testid prefix pattern is signup-*, login-*, admin-*, attendance-*, advance-dialog/fine-dialog/payment-dialog etc. Mobile bottom nav has 5 items (Dashboard/Staff/Attendance/Payments/More).",
+  "rca of the issue": "No blocking issues. Minor off-by-one in brute-force lockout stems from pymongo's find_one_and_update with return_document=True returning AFTER state; threshold check `rec.get('count',0) >= LOCK_AFTER` fires at count==5 only on the 5th call AFTER increment, so locked_until is only persisted at that point; the response is still 401 for that call and the first 429 appears on the 6th. Fix: either compare `>= LOCK_AFTER` (works with AFTER as above but set lock earlier by using `> LOCK_AFTER - 1` after check, i.e., just reorder to set lock within the same transaction and respond 429), or switch to ReturnDocument.BEFORE and check `>= LOCK_AFTER - 1`."
+}

@@ -29,7 +29,7 @@ export const AuthShell = ({ title, subtitle, children }) => (
 export const PhoneInput = ({ value, onChange, testid = "phone-input" }) => (
   <div className="flex">
     <span className="flex items-center rounded-l-lg border border-r-0 border-stone-300 bg-stone-100 px-3 text-sm font-semibold text-stone-600">+91</span>
-    <input className="inp rounded-l-none" inputMode="numeric" maxLength={10} placeholder="98765 43210" required value={value}
+    <input type="tel" className="inp rounded-l-none" inputMode="numeric" maxLength={10} placeholder="98765 43210" required value={value}
       onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))} data-testid={testid} />
   </div>
 );

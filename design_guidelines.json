@@ -1,0 +1,115 @@
+{
+  "app_metadata": {
+    "app_name": "StaffBook",
+    "app_type": "saas_app_dashboard",
+    "target_audience": "Indian Small Businesses (shops, Kirana, restaurants, medical stores, service businesses)",
+    "design_archetype": "Swiss & High-Contrast with Warm Premium Accents (Tactile Utility)",
+    "file_type_convention": "JavaScript (.js / .jsx)",
+    "nav_structure": "Mobile: Fixed Bottom Navigation Bar | Desktop: Left Collapsible/Static Sidebar"
+  },
+  "color_palette": {
+    "deep_charcoal": "#171717",
+    "warm_ivory": "#F7F5F0",
+    "burgundy": "#8B1E2D",
+    "subtle_gold": "#C6A15B",
+    "semantic": {
+      "background_light": "#F7F5F0",
+      "surface_card": "#FFFFFF",
+      "surface_card_dark": "#171717",
+      "text_primary": "#171717",
+      "text_secondary": "#52525B",
+      "text_muted": "#71717A",
+      "border": "#E4E4E7",
+      "border_dark": "#27272A",
+      "brand_primary": "#8B1E2D",
+      "brand_accent": "#C6A15B",
+      "success_green": "#166534",
+      "success_bg": "#DCFCE7",
+      "warning_amber": "#9A3412",
+      "warning_bg": "#FFEDD5",
+      "danger_red": "#991B1B",
+      "danger_bg": "#FEE2E2",
+      "info_blue": "#1E40AF",
+      "info_bg": "#DBEAFE"
+    }
+  },
+  "typography": {
+    "font_family_heading": "Plus Jakarta Sans, Outfit, sans-serif",
+    "font_family_body": "Inter, system-ui, sans-serif",
+    "font_family_mono": "JetBrains Mono, monospace",
+    "scale": {
+      "h1": "text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight",
+      "h2": "text-xl sm:text-2xl font-semibold tracking-tight",
+      "h3": "text-lg font-semibold",
+      "h4": "text-base font-medium",
+      "body_lg": "text-base font-normal leading-relaxed",
+      "body": "text-sm font-normal leading-normal",
+      "caption": "text-xs font-medium text-muted-foreground uppercase tracking-wider"
+    }
+  },
+  "layout_and_spacing": {
+    "mobile_first": true,
+    "bottom_nav_mobile": "fixed bottom-0 left-0 right-0 h-16 bg-[#171717] text-[#F7F5F0] z-50 flex items-center justify-around border-t border-[#27272A] md:hidden",
+    "sidebar_desktop": "hidden md:flex flex-col w-64 fixed left-0 top-0 bottom-0 bg-[#171717] text-[#F7F5F0] border-r border-[#27272A] z-40 p-4",
+    "main_content_wrapper": "min-h-screen bg-[#F7F5F0] text-[#171717] pb-20 md:pb-8 md:pl-64 pt-4 px-4 sm:px-6 lg:px-8",
+    "card_padding": "p-4 sm:p-6",
+    "gap_density": "gap-3 sm:gap-4 md:gap-6"
+  },
+  "component_styles": {
+    "buttons": {
+      "primary": "bg-[#8B1E2D] hover:bg-[#701824] text-white font-medium px-4 py-2.5 rounded-lg shadow-sm active:scale-[0.98] transition-colors focus:ring-2 focus:ring-[#C6A15B] focus:outline-none",
+      "secondary": "bg-[#171717] hover:bg-[#262626] text-[#F7F5F0] font-medium px-4 py-2.5 rounded-lg border border-[#333333] active:scale-[0.98] transition-colors",
+      "accent": "bg-[#C6A15B] hover:bg-[#B38F4A] text-[#171717] font-semibold px-4 py-2.5 rounded-lg shadow-sm active:scale-[0.98] transition-colors",
+      "outline": "border border-[#171717]/20 hover:bg-[#171717]/5 text-[#171717] font-medium px-4 py-2.5 rounded-lg transition-colors"
+    },
+    "cards": {
+      "stat_card": "bg-white border border-stone-200 rounded-xl p-4 shadow-sm hover:border-[#C6A15B]/50 transition-all",
+      "profile_card": "bg-white border border-stone-200 rounded-xl p-5 shadow-sm"
+    },
+    "status_badges": {
+      "present": "bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "absent": "bg-rose-100 text-rose-800 border border-rose-300 px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "pending": "bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "paid": "bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "overdue": "bg-red-100 text-red-800 border border-red-300 px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "half_day": "bg-blue-100 text-blue-800 border border-blue-300 px-2.5 py-0.5 rounded-full text-xs font-semibold"
+    },
+    "tables": {
+      "container": "w-full overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm",
+      "header": "bg-[#171717] text-[#F7F5F0] text-xs uppercase tracking-wider font-semibold py-3 px-4 text-left",
+      "row": "border-b border-stone-100 hover:bg-stone-50 transition-colors text-sm text-[#171717]"
+    }
+  },
+  "animation_guidelines": {
+    "philosophy": "Fast, subtle micro-feedback only. Avoid heavy decorative entrance or continuous animations.",
+    "hover_state": "transition-colors duration-150 ease-in-out",
+    "active_press": "active:scale-[0.98]",
+    "modals_drawers": "Use basic Vaul drawer for mobile bottom sheets and simple Radix dialog for desktop modals with minimal fade/slide-up"
+  },
+  "image_urls": {
+    "avatars": [
+      {
+        "description": "Indian store owner male portrait",
+        "url": "https://images.unsplash.com/photo-1695391396401-5fbb4bedafc1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzV8MHwxfHNlYXJjaHwxfHxpbmRpYW4lMjBzbWFsbCUyMGJ1c2luZXNzJTIwc3RvcmUlMjBvd25lciUyMHBvcnRyYWl0fGVufDB8fHx8MTc5MTk1ODk0Nnww&ixlib=rb-4.1.0&q=85"
+      },
+      {
+        "description": "Indian female business owner portrait",
+        "url": "https://images.unsplash.com/photo-1778550579010-cb0d00cd94e6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzV8MHwxfHNlYXJjaHwyfHxpbmRpYW4lMjBzbWFsbCUyMGJ1c2luZXNzJTIwc3RvcmUlMjBvd25lciUyMHBvcnRyYWl0fGVufDB8fHx8MTc5MTk1ODk0Nnww&ixlib=rb-4.1.0&q=85"
+      },
+      {
+        "description": "Indian retail worker portrait",
+        "url": "https://images.unsplash.com/photo-1759334928681-dc7ad674138e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzV8MHwxfHNlYXJjaHwzfHxpbmRpYW4lMjBzbWFsbCUyMGJ1c2luZXNzJTIwc3RvcmUlMjBvd25lciUyMHBvcnRyYWl0fGVufDB8fHx8MTc5MTk1ODk0Nnww&ixlib=rb-4.1.0&q=85"
+      }
+    ]
+  },
+  "testing_requirements": {
+    "data_testid_rule": "ALL interactive components, submit buttons, stat cards, tab triggers, inputs, navigation links, and action menus MUST include explicit data-testid attributes formatted in kebab-case (e.g. data-testid='staff-add-btn', data-testid='attendance-mark-present', data-testid='total-payable-card')."
+  },
+  "instructions_to_main_agent": [
+    "Follow mobile-first architecture: bottom nav bar on screen width < 768px, sidebar on desktop >= 768px.",
+    "Use color palette tokens strictly: Primary Burgundy #8B1E2D, Charcoal #171717, Gold #C6A15B, Warm Ivory #F7F5F0.",
+    "Keep components clean and fast. Minimal animations per user preference.",
+    "Use sonner for notifications and Radix / Shadcn components customized to match palette.",
+    "Add data-testid to every interactive element and stat card for automated test support."
+  ]
+}

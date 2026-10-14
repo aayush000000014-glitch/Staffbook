@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sb-charcoal: #171717;
+  --sb-ivory: #F7F5F0;
+  --sb-burgundy: #8B1E2D;
+  --sb-gold: #C6A15B;
+}
+
+body {
+  margin: 0;
+  font-family: "Figtree", system-ui, sans-serif;
+  background: var(--sb-ivory);
+  color: var(--sb-charcoal);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, .font-display { font-family: "Bricolage Grotesque", "Figtree", sans-serif; }
+.font-num { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+::selection { background: #C6A15B; color: #171717; }
+
+@layer base {
+  :root {
+    --background: 43 30% 95%;
+    --foreground: 0 0% 9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 353 65% 33%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 9%;
+    --secondary-foreground: 43 30% 95%;
+    --muted: 40 15% 92%;
+    --muted-foreground: 240 4% 40%;
+    --accent: 39 47% 57%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 70% 35%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 30 10% 86%;
+    --input: 30 10% 82%;
+    --ring: 39 47% 57%;
+    --radius: 0.6rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+}
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C6A15B]; }
+  .btn-primary { @apply btn bg-[#8B1E2D] text-white hover:bg-[#701824]; }
+  .btn-dark { @apply btn bg-[#171717] text-[#F7F5F0] hover:bg-[#2a2a2a]; }
+  .btn-gold { @apply btn bg-[#C6A15B] text-[#171717] hover:bg-[#b38f4a]; }
+  .btn-outline { @apply btn border border-stone-300 bg-white text-[#171717] hover:bg-stone-100; }
+  .btn-ghost { @apply btn text-[#171717] hover:bg-stone-200/60; }
+  .btn-sm { @apply px-3 py-1.5 text-xs; }
+  .inp { @apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#171717] placeholder:text-stone-400 focus:border-[#C6A15B] focus:outline-none focus:ring-2 focus:ring-[#C6A15B]/30 disabled:bg-stone-100; }
+  .lbl { @apply mb-1.5 block text-xs font-semibold uppercase tracking-wider text-stone-600; }
+  .card { @apply rounded-xl border border-stone-200 bg-white shadow-sm; }
+  .tbl { @apply w-full text-sm; }
+  .tbl thead th { @apply bg-[#171717] px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-[#F7F5F0] whitespace-nowrap; }
+  .tbl tbody td { @apply border-b border-stone-100 px-3 py-2.5 align-top; }
+  .tbl tbody tr:hover { @apply bg-stone-50; }
+  .tbl tfoot td { @apply bg-stone-100 px-3 py-2.5 font-semibold; }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  .print-area { padding: 0 !important; margin: 0 !important; }
+  body { background: white; }
+  .tbl thead th { background: #eee !important; color: #000 !important; -webkit-print-color-adjust: exact; }
+  @page { size: landscape; margin: 10mm; }
+}

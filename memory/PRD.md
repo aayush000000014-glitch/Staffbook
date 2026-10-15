@@ -28,6 +28,12 @@ Business owner (daily use on phone), Staff (read-only own salary), Super Admin (
 - Auth: revocable server sessions in an HttpOnly, Secure, SameSite=Lax cookie sb_session (30 days, sliding). No token in localStorage. Logout deletes the session.
 - Tests: iteration_2 — 30/30 backend tests passed; persistent-login UI flow passed.
 
+## Update 2026-10-15 (b): 40-day cycle model
+- Salary is earned in monthly blocks counted from the joining date (14 Sep–13 Oct). Due dates fall on joining+39 days and then every 40 days. Each due date pays every block completed by that date. Example: join 14 Sep → due 23 Oct, ₹15,000.
+- On startup, a migration rebuilds unpaid 40-day salary periods. Periods with payments or recorded recoveries are left untouched.
+- Outstanding on staff list, profile and staff view = completed periods only. accruing_balance = the current period so far.
+- iteration_3: 37/37 tests passed.
+
 ## Backlog
 - P1: Server-generated PDF files; rehire former staff; bulk attendance for all staff on a date.
 - P2: Pagination for large histories; rate limit on signup/recovery-question; GitHub/Vercel deployment (frontend only — backend needs a Python host).

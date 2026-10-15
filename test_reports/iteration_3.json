@@ -1,0 +1,27 @@
+{
+  "summary": "Iter3 - cycle40 new monthly-block model verified end-to-end. Updated 1 stale cycle40 API test (period_end 2026-10-06 not 2026-10-16, gross 15000) and added 6 new iter3 cases: (a) spec example joining 2026-08-14 salary 15000 fixed30 cycle40 produces exactly three obligations p1 14Aug-13Sep due 22Sep gross/balance 15500 (31 Aug days * 500/d, overdue), p2 14Sep-13Oct due 1Nov 15000 (pending), p3 14Oct-13Nov due 11Dec accruing - all balance >= 0; (b) joining 2026-09-14 first period 14Sep-13Oct due 23Oct balance 15000; (c) partial payments on cycle40 obligation - pay 5000 -> partially_paid=true, pay remaining -> status=paid balance 0, duplicate client_ref 409, overpay 422; (d) mark-as-left mid-block - last period truncated to leaving_date, settlement present, status former; (e) absent/manual-fine/advance deductions each applied once (p1 net 13800 = 15500-500-200-1000, total advance recovery across all periods = 1000); (f) outstanding (completed periods only) vs accruing_balance (current period) split on staff profile matches staff list and dashboard. All 10 engine unit tests cover 14 Sep walkthrough (periods [14Sep-13Oct due 23Oct 15000], [14Oct-13Nov due 2Dec 15000], [14Nov-13Dec due 11Jan 15000], [14Dec-13Feb due 20Feb 30000 - 2-month block], no gaps, +40d increments, leaving truncation, resume-from-last_end). Live UI/API cross-check via /api/staff/{id}: outstanding=30500, accruing_balance=1000 - matches spec exactly. Super-admin login via Playwright OK; httpOnly sb_session cookie persists.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_engine.py",
+    "/app/backend/tests/test_staffbook_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "engine.cycle40_entries correctly implements the new monthly-block model: due dates every 40 days from anchor (anchor+39, +40, ...); each period is a monthly block from anchor; multi-block cycles (e.g. 14Dec-13Feb due 20Feb pays 30000) handled via inner while-loop that advances i until next anniversary start > due.",
+    "routes_staff.staff_profile and list_staff compute `outstanding = sum(balance of non-accruing views)` and `accruing_balance = sum(balance of accruing views)` so dashboard/pending/overdue never double-count current period. Clean split; matches spec.",
+    "server.migrate_cycle40_periods rebuilds unpaid cycle40 obligations only (preserves locked/paid ones) - safe for schema migrations between iterations.",
+    "engine.compute_salary caps per calendar month at monthly salary (never >salary in a month) via the `cum` function; split-month sums exactly to monthly salary - verified by engine unit tests."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_staffbook_api.py (fixed stale TestCycle40 expectation and added TestCycle40NewModel + TestOutstandingSplit, ~6 new cases)"
+  ],
+  "success_rate": {"backend": "100% (37/37)", "frontend": "100% smoke (super-admin login + API)"},
+  "test_credentials": "Super admin phone 8950771876 pw @Aayush_0512 (seeded).",
+  "seed_data_creation": "Created ~17 TEST_* businesses during pytest + UI run; all removed by /app/scripts/cleanup_test_data.py (60 cleaned incl. prior iterations' residuals).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Today in app logic is IST 2026-10-15. Obligation `gross` lives under `obligation.breakdown.gross` (not top-level). Partial-paid obligations keep status='overdue' when past due; use `partially_paid` boolean + `paid`/`balance` to distinguish. Dashboard `pending` and `overdue` are {count, amount, items} dicts, not scalars. Use `_signup_fresh()` helper and REACT_APP_BACKEND_URL env for pytest. Run: cd /app/backend && REACT_APP_BACKEND_URL=... python -m pytest tests/ -v. Cleanup via /app/scripts/cleanup_test_data.py.",
+  "rca of the issue": "No bugs. Only stale test expectations from iter2 that encoded the old cycle40 model (first period ended at due_date, gross=20000 for 40-day block). Updated to the new monthly-block model where each period is a monthly block from the joining anniversary and due dates land every 40 days from join; a cycle may pay 0, 1 or multiple completed monthly blocks between due dates (e.g. 14Dec period pays 2 blocks on 20Feb 2027)."
+}

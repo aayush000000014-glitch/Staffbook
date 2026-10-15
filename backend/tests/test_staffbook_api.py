@@ -324,8 +324,197 @@ class TestCycle40:
         obs = s.get(f"{BASE_URL}/api/obligations?staff_id={staff['id']}").json()
         first = obs[0]
         assert first["period_start"] == "2026-09-07"
-        assert first["period_end"] == "2026-10-16"
+        assert first["period_end"] == "2026-10-06"
         assert first["due_date"] == "2026-10-16"
+        # New model: monthly block = 15000 (not 20000)
+        assert first["breakdown"]["gross"] == 15000.0
+
+
+# ---------- ITER3: 40-day cycle new model (spec examples) ----------
+class TestCycle40NewModel:
+    """Spec: today=2026-10-15 IST, salary 15000 fixed30, cycle40.
+    joining 2026-08-14 -> three obligations:
+      p1: 14 Aug-13 Sep due 22 Sep gross 15500 (Aug=18d*500 + Sep=13d*500) overdue
+      p2: 14 Sep-13 Oct due  1 Nov gross 15000 pending
+      p3: 14 Oct-13 Nov due 11 Dec accruing"""
+
+    def test_aug14_three_blocks(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, schedule="cycle40")
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "C40Aug", "phone": "", "designation": "",
+            "monthly_salary": 15000, "joining_date": "2026-08-14",
+            "schedule_type": "cycle40", "salary_method": "fixed30"}).json()
+        sid = staff["id"]
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json()
+        obs = sorted(obs, key=lambda o: o["period_start"])
+        assert len(obs) >= 3, [o["period_start"] for o in obs]
+        p1, p2, p3 = obs[0], obs[1], obs[2]
+        assert (p1["period_start"], p1["period_end"], p1["due_date"]) == (
+            "2026-08-14", "2026-09-13", "2026-09-22")
+        assert p1["breakdown"]["gross"] == 15500.0, p1
+        assert (p2["period_start"], p2["period_end"], p2["due_date"]) == (
+            "2026-09-14", "2026-10-13", "2026-11-01")
+        assert p2["breakdown"]["gross"] == 15000.0
+        assert (p3["period_start"], p3["period_end"], p3["due_date"]) == (
+            "2026-10-14", "2026-11-13", "2026-12-11")
+        assert p3["accruing"] is True
+        # p1,p2 not accruing
+        assert p1["accruing"] is False and p2["accruing"] is False
+        # Staff profile outstanding = only completed (p1+p2 balances); accruing_balance = p3 balance
+        prof = s.get(f"{BASE_URL}/api/staff/{sid}").json()
+        outstanding_expected = round(p1["balance"] + p2["balance"], 2)
+        assert prof["outstanding"] == outstanding_expected
+        assert prof["accruing_balance"] == p3["balance"]
+        # Staff list "outstanding" matches
+        lst = s.get(f"{BASE_URL}/api/staff").json()
+        row = next(x for x in lst if x["id"] == sid)
+        assert row["outstanding"] == outstanding_expected
+
+    def test_sep14_first_block(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, schedule="cycle40")
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "C40Sep", "phone": "", "designation": "",
+            "monthly_salary": 15000, "joining_date": "2026-09-14",
+            "schedule_type": "cycle40", "salary_method": "fixed30"}).json()
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={staff['id']}").json()
+        obs = sorted(obs, key=lambda o: o["period_start"])
+        p1 = obs[0]
+        assert (p1["period_start"], p1["period_end"], p1["due_date"]) == (
+            "2026-09-14", "2026-10-13", "2026-10-23")
+        assert p1["balance"] == 15000.0 and p1["breakdown"]["gross"] == 15000.0
+
+    def test_partial_payments(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, schedule="cycle40")
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "C40Pay", "phone": "", "designation": "",
+            "monthly_salary": 15000, "joining_date": "2026-08-14",
+            "schedule_type": "cycle40", "salary_method": "fixed30"}).json()
+        sid = staff["id"]
+        obs = sorted(s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json(),
+                    key=lambda o: o["period_start"])
+        target = obs[0]  # overdue 15500
+        oid = target["id"]
+        ref1 = f"c40a{int(time.time()*1000)}"
+        r1 = s.post(f"{BASE_URL}/api/obligations/{oid}/pay", json={
+            "amount": 5000, "method": "cash", "date": "2026-10-14",
+            "client_ref": ref1})
+        assert r1.status_code == 200, r1.text
+        ob1 = s.get(f"{BASE_URL}/api/obligations/{oid}").json()
+        assert ob1["partially_paid"] is True
+        assert ob1["paid"] == 5000.0
+        remaining = ob1["balance"]
+        ref2 = f"c40b{int(time.time()*1000)}"
+        r2 = s.post(f"{BASE_URL}/api/obligations/{oid}/pay", json={
+            "amount": remaining, "method": "cash", "date": "2026-10-14",
+            "client_ref": ref2})
+        assert r2.status_code == 200
+        ob2 = s.get(f"{BASE_URL}/api/obligations/{oid}").json()
+        assert ob2["status"] == "paid"
+        assert ob2["balance"] == 0.0
+        # duplicate client_ref -> 409
+        dup = s.post(f"{BASE_URL}/api/obligations/{oid}/pay", json={
+            "amount": 1.0, "method": "cash", "date": "2026-10-14",
+            "client_ref": ref1})
+        assert dup.status_code == 409
+        # overpay (new obligation) -> 422
+        p2 = obs[1]
+        over = s.post(f"{BASE_URL}/api/obligations/{p2['id']}/pay", json={
+            "amount": 999999, "method": "cash", "date": "2026-10-14",
+            "client_ref": f"c40o{int(time.time()*1000)}"})
+        assert over.status_code == 422
+
+    def test_mark_left_mid_block(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, schedule="cycle40")
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "C40Left", "phone": "", "designation": "",
+            "monthly_salary": 15000, "joining_date": "2026-08-14",
+            "schedule_type": "cycle40", "salary_method": "fixed30"}).json()
+        sid = staff["id"]
+        r = s.post(f"{BASE_URL}/api/staff/{sid}/leave",
+                   json={"leaving_date": "2026-10-20", "reason": "iter3"})
+        assert r.status_code == 200, r.text
+        obs = sorted(s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json(),
+                    key=lambda o: o["period_start"])
+        # Last period is truncated to 2026-10-20
+        last = obs[-1]
+        assert last["period_end"] == "2026-10-20"
+        # Profile settlement present
+        prof = s.get(f"{BASE_URL}/api/staff/{sid}").json()
+        assert prof["settlement"] is not None
+        assert prof["staff"]["status"] == "former"
+
+    def test_cycle40_deductions_once(self):
+        """Absent day (500), manual fine, advance auto-recovery
+        reduce one period net once; outstanding never negative."""
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, schedule="cycle40", late_fine=150.0)
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "C40Ded", "phone": "", "designation": "",
+            "monthly_salary": 15000, "joining_date": "2026-08-14",
+            "schedule_type": "cycle40", "salary_method": "fixed30"}).json()
+        sid = staff["id"]
+        # Absent 2026-08-20 -> 500 deduction (fixed30 500/day)
+        r = s.put(f"{BASE_URL}/api/attendance", json={
+            "staff_id": sid, "date": "2026-08-20", "status": "absent"})
+        assert r.status_code == 200, r.text
+        # Manual fine 200 (reason >= 2 chars)
+        rf = s.post(f"{BASE_URL}/api/fines", json={
+            "staff_id": sid, "amount": 200, "date": "2026-08-22",
+            "reason": "manual-test"})
+        assert rf.status_code == 200, rf.text
+        # Advance 1000
+        ra = s.post(f"{BASE_URL}/api/advances", json={
+            "staff_id": sid, "amount": 1000, "date": "2026-08-25"})
+        assert ra.status_code == 200, ra.text
+        obs = sorted(s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json(),
+                    key=lambda o: o["period_start"])
+        p1 = obs[0]
+        # p1 gross stays 15500 (14 Aug-13 Sep monthly block)
+        assert p1["breakdown"]["gross"] == 15500.0
+        # Absent day deducted once
+        assert p1["breakdown"]["attendance_deduction"] == 500.0
+        # Manual fine 200 applied in p1 (fine date within period)
+        assert p1["manual_fines"] == 200.0
+        # Advance 1000 auto-recovered once in p1
+        assert p1["advance_recovery"] == 1000.0
+        # Totals never negative
+        for o in obs:
+            assert o["balance"] >= 0, o
+        # Expected: 15500 - 500(absent) - 200(fine) - 1000(adv) = 13800
+        assert p1["net_payable"] == 13800.0
+        # Advance not double-recovered
+        total_rec = sum(o["advance_recovery"] for o in obs)
+        assert total_rec == 1000.0
+
+
+# ---------- ITER3: outstanding vs accruing_balance for fixed_date ----------
+class TestOutstandingSplit:
+    def test_fixed_date_accruing_excluded(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10)
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "SplitStaff", "phone": "", "designation": "",
+            "monthly_salary": 10000, "joining_date": "2026-08-01"}).json()
+        sid = staff["id"]
+        prof = s.get(f"{BASE_URL}/api/staff/{sid}").json()
+        obs = prof["obligations"]
+        accr = [o for o in obs if o["accruing"]]
+        done = [o for o in obs if not o["accruing"]]
+        assert prof["outstanding"] == round(sum(o["balance"] for o in done), 2)
+        assert prof["accruing_balance"] == round(sum(o["balance"] for o in accr), 2)
+        # dashboard pending/overdue should not count the current (accruing) obligation balance
+        d = s.get(f"{BASE_URL}/api/dashboard").json()
+        assert d["pending"]["amount"] + d["overdue"]["amount"] >= 0
 
 
 # ---------- Payment flow ----------

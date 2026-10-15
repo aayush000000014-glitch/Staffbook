@@ -117,7 +117,7 @@ export default function StaffProfile() {
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard tone="dark" label="Earned this month" value={d.this_month.earned} money hint={`${d.this_month.eligible_days} days · rate ${inr(d.this_month.daily_rate)}/day`} testid="profile-earned" />
-        <StatCard label="Outstanding salary" value={d.outstanding} money testid="profile-outstanding" />
+        <StatCard label="Outstanding salary" value={d.outstanding} money hint={`Payable now. Current period so far: ${inr(d.accruing_balance)}`} testid="profile-outstanding" />
         <StatCard label="Advance balance" value={d.advance_summary.outstanding} money hint={`Recovered this month ${inr(d.advance_summary.recovered_this_month)}`} testid="profile-advance-balance" />
         <StatCard label="Paid leave left" value={`${d.leave.remaining} / ${d.leave.quota}`} hint={`${d.leave.period}: ${d.leave.paid} paid, ${d.leave.unpaid} unpaid`} testid="profile-leave" />
       </div>

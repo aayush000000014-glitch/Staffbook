@@ -78,6 +78,29 @@ async def migrate_cycle_due_dates():
             await db.obligations.update_one({"id": ob["id"]}, {"$set": upd})
 
 
+async def migrate_cycle40_periods():
+    """Rebuild unpaid 40-day-cycle salary periods that don't match the monthly-earning model.
+    Periods with payments or recorded advance recoveries are never touched."""
+    from engine import generate_periods
+    from core import today
+    t = today()
+    async for s in db.staff.find({"schedule_type": "cycle40"}, {"_id": 0, "photo": 0}):
+        expected = {a.isoformat(): (b.isoformat(), c.isoformat()) for a, b, c in generate_periods(s, None, t)}
+        obs = await db.obligations.find({"staff_id": s["id"], "cancelled": {"$ne": True}}, {"_id": 0}).sort("period_start", 1).to_list(None)
+        locked = []
+        for ob in obs:
+            has_txn = await db.transactions.find_one({"obligation_id": ob["id"]})
+            has_rec = await db.advance_recoveries.find_one({"obligation_id": ob["id"]})
+            locked.append(bool(has_txn or has_rec))
+        last_locked = max([i for i, x in enumerate(locked) if x], default=-1)
+        stale = [ob["id"] for i, ob in enumerate(obs) if i > last_locked and ob.get("schedule_type") == "cycle40"
+                 and expected.get(ob["period_start"]) != (ob["period_end"], ob["original_due_date"])]
+        if stale:
+            first = obs.index(next(o for o in obs if o["id"] == stale[0]))
+            ids = [o["id"] for o in obs[first:]]
+            await db.obligations.delete_many({"id": {"$in": ids}})
+
+
 async def seed_super_admin():
     phone = norm_phone(os.environ["SUPER_ADMIN_PHONE"])
     pw = os.environ["SUPER_ADMIN_PASSWORD"]
@@ -98,6 +121,7 @@ async def seed_super_admin():
 async def startup():
     await ensure_indexes()
     await migrate_cycle_due_dates()
+    await migrate_cycle40_periods()
     await seed_super_admin()
 
 

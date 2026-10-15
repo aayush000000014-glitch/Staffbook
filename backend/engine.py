@@ -47,6 +47,8 @@ def generate_periods(staff: dict, last_end, upto: date):
     """Salary periods (start, end, due) starting after last_end up to `upto`."""
     join = D(staff["joining_date"])
     leave = D(staff.get("leaving_date"))
+    if staff["schedule_type"] == "cycle40":
+        return _cycle40_periods(staff, join, leave, last_end, upto)
     out = []
     if last_end:
         s = D(last_end) + timedelta(days=1)
@@ -63,6 +65,43 @@ def generate_periods(staff: dict, last_end, upto: date):
         out.append(p)
         s = p[1] + timedelta(days=1)
     return out
+
+
+def anniv_start(anchor: date, i: int) -> date:
+    y, m = add_months(anchor.year, anchor.month, i)
+    return clamp_day(y, m, anchor.day)
+
+
+def cycle40_entries(anchor: date, upto: date, leave):
+    """40-day cycle: due dates every 40 days (anchor+39, +40, ...). Salary is earned in monthly blocks
+    from the anchor (e.g. 14 Sep-13 Oct); each due date pays every block completed since the previous due date."""
+    out, prev_cut, j, i = [], anchor - timedelta(days=1), 1, 1
+    while True:
+        due = anchor + timedelta(days=39 + 40 * (j - 1))
+        while anniv_start(anchor, i) - timedelta(days=1) <= due:
+            i += 1
+        cut = anniv_start(anchor, i - 1) - timedelta(days=1)
+        start = prev_cut + timedelta(days=1)
+        if start > upto or (leave and start > leave):
+            return out
+        out.append((start, min(cut, leave) if leave else cut, due))
+        prev_cut, j = cut, j + 1
+
+
+def _cycle40_periods(staff, join, leave, last_end, upto):
+    cs = D(staff.get("cycle_start"))
+    seq = []
+    if cs and cs > join:
+        stub_end = cs - timedelta(days=1)
+        seq.append((join, min(stub_end, leave) if leave else stub_end, stub_end))
+        anchor = cs
+    else:
+        anchor = join
+    seq += cycle40_entries(anchor, upto, leave)
+    if last_end:
+        le = D(last_end)
+        seq = [(max(a, le + timedelta(days=1)), b, c) for a, b, c in seq if b > le]
+    return [p for p in seq if p[0] <= upto and p[0] <= p[1]]
 
 
 def unpaid_leave_dates(leave_dates, quota: int, period: str) -> set:

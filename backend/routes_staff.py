@@ -70,7 +70,8 @@ async def list_staff(status: str = "active", q: str = "", designation: str = "",
     views = L.views()
     due = {}
     for v in views:
-        due[v["staff_id"]] = due.get(v["staff_id"], 0) + v["balance"]
+        if not v["accruing"]:
+            due[v["staff_id"]] = due.get(v["staff_id"], 0) + v["balance"]
     out = []
     for s in sorted(L.staff.values(), key=lambda x: x["name"].lower()):
         if status != "all" and s["status"] != status:
@@ -110,7 +111,8 @@ async def staff_profile(sid: str, ctx=Depends(owner_ctx)):
             "advances": adv, "advance_summary": L.advance_summary(sid), "recoveries": recs, "fines": fines,
             "transactions": txns, "leave": L.leave_summary(sid), "this_month": L.salary(sid, t.replace(day=1), month_end),
             "login_phone": login["phone"] if login else None, "settlement": settlement,
-            "outstanding": r2(sum(v["balance"] for v in views))}
+            "outstanding": r2(sum(v["balance"] for v in views if not v["accruing"])),
+            "accruing_balance": r2(sum(v["balance"] for v in views if v["accruing"]))}
 
 
 @router.put("/staff/{sid}")

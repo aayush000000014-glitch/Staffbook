@@ -1,5 +1,5 @@
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -29,18 +29,32 @@ def test_cycles():
     p30 = generate_periods(staff(schedule_type="cycle30", joining_date="2026-01-15"), None, date(2026, 3, 1))
     assert p30[0] == (date(2026, 1, 15), date(2026, 2, 13), date(2026, 2, 13))
     p40 = generate_periods(staff(schedule_type="cycle40", joining_date="2026-01-01"), None, date(2026, 2, 15))
-    assert p40[0][2] == date(2026, 2, 9) and p40[1][0] == date(2026, 2, 10)
+    assert p40[0] == (date(2026, 1, 1), date(2026, 1, 31), date(2026, 2, 9)) and p40[1][0] == date(2026, 2, 1)
 
 
 def test_40_day_example_and_no_double_count():
-    s = staff(schedule_type="cycle40", joining_date="2026-09-07")
-    p = generate_periods(s, None, date(2026, 11, 30))
-    assert p[0] == (date(2026, 9, 7), date(2026, 10, 16), date(2026, 10, 16))
-    assert p[1][0] == date(2026, 10, 17)
-    a = compute_salary(15000, "fixed30", p[0][0], p[0][1], "2026-09-07", None, [], set())
-    assert a["gross"] == 20000.0  # 24 Sep days + 16 Oct days at 500/day
+    s = staff(schedule_type="cycle40", joining_date="2026-09-14")
+    p = generate_periods(s, None, date(2027, 4, 30))
+    assert p[0] == (date(2026, 9, 14), date(2026, 10, 13), date(2026, 10, 23))
+    assert p[1] == (date(2026, 10, 14), date(2026, 11, 13), date(2026, 12, 2))
+    assert p[2] == (date(2026, 11, 14), date(2026, 12, 13), date(2027, 1, 11))
+    assert p[3] == (date(2026, 12, 14), date(2027, 2, 13), date(2027, 2, 20))
+    for a, b in zip(p, p[1:]):
+        assert b[0] == a[1] + timedelta(days=1) and b[2] == a[2] + timedelta(days=40)
+    first = compute_salary(15000, "fixed30", p[0][0], p[0][1], "2026-09-14", None, [], set())
+    assert first["gross"] == 15000.0
+    for a, b, _ in p[1:3]:
+        assert compute_salary(15000, "fixed30", a, b, "2026-09-14", None, [], set())["gross"] == 15000.0
+    assert compute_salary(15000, "fixed30", p[3][0], p[3][1], "2026-09-14", None, [], set())["gross"] == 30000.0
+    left = generate_periods(staff(schedule_type="cycle40", joining_date="2026-09-14", leaving_date="2026-10-20"), None, date(2027, 1, 1))
+    assert left == [(date(2026, 9, 14), date(2026, 10, 13), date(2026, 10, 23)), (date(2026, 10, 14), date(2026, 10, 20), date(2026, 12, 2))]
+    resumed = generate_periods(s, "2026-10-13", date(2026, 11, 1))
+    assert resumed == [(date(2026, 10, 14), date(2026, 11, 13), date(2026, 12, 2))]
+
+
+def test_month_split_never_exceeds_salary():
     b = compute_salary(15000, "fixed30", "2026-10-17", "2026-10-31", "2026-09-07", None, [], set())
-    assert b["gross"] == 7000.0  # October total capped at monthly salary 15000
+    assert b["gross"] == 7000.0
     c = compute_salary(15000, "calendar", "2026-10-01", "2026-10-16", "2026-09-07", None, [], set())
     d = compute_salary(15000, "calendar", "2026-10-17", "2026-10-31", "2026-09-07", None, [], set())
     assert round(c["gross"] + d["gross"], 2) == 15000.0

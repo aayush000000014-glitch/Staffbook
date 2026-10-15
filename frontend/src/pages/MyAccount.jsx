@@ -27,7 +27,7 @@ export default function MyAccount() {
               <StatCard tone="dark" label="Earned this month" value={d.this_month.earned} money testid="me-earned" />
               <StatCard label="Advance balance" value={d.advances.outstanding} money testid="me-advance" />
               <StatCard label="Paid leave left" value={`${d.leave.remaining} / ${d.leave.quota}`} hint={LABELS[d.leave.period]} testid="me-leave" />
-              <StatCard label="Outstanding salary" value={d.obligations.reduce((a, v) => a + v.balance, 0)} money testid="me-outstanding" />
+              <StatCard label="Outstanding salary" value={d.obligations.filter((v) => !v.accruing).reduce((a, v) => a + v.balance, 0)} money hint="Completed salary periods" testid="me-outstanding" />
             </div>
             <h3 className="mb-2 font-semibold">Salary periods</h3>
             {d.obligations.length === 0 ? <EmptyState title="No salary periods yet" /> : (

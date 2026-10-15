@@ -13,15 +13,20 @@ export const Breakdown = ({ v }) => {
       <Row k={`Gross for ${b.eligible_days} eligible days (${LABELS[v.salary_method]})`} v={inr(b.gross)} />
       <Row k={`Attendance deduction (${b.absent_days} absent, ${b.half_days} half, ${b.unpaid_leave_days} unpaid leave)`} v={`− ${inr(b.attendance_deduction)}`} neg />
       <Row k="Earned salary" v={inr(b.earned)} strong />
-      <Row k={`Late fines (${b.late_hours} hrs)`} v={`− ${inr(b.late_fines)}`} neg />
-      <Row k="Manual fines" v={`− ${inr(v.manual_fines)}`} neg />
-      <Row k="Advance recovery" v={`− ${inr(v.advance_recovery)}`} neg />
+      <Row k={`Late fines (${b.late_hours} hrs)`} v={inr(v.late_fines)} />
+      <Row k="Manual fines" v={inr(v.manual_fines)} />
+      {v.fines_carried_in > 0 && <Row k="Fines carried from previous period" v={inr(v.fines_carried_in)} />}
+      <Row k="Fines deducted" v={`− ${inr(v.fines_deducted)}`} neg />
+      {v.fines_not_deducted > 0 && <Row k="Fines not deducted (exceed salary)" v={inr(v.fines_not_deducted)} />}
+      {v.fines_carried_out > 0 && <Row k="Fines carried to next period" v={inr(v.fines_carried_out)} />}
+      <Row k={`Advance recovery${v.advance_mode === "auto" ? " (automatic)" : ""}`} v={`− ${inr(v.advance_recovery)}`} neg />
       <Row k="Other deductions" v={`− ${inr(v.other_deductions)}`} neg />
+      <Row k="Total deductions" v={`− ${inr(v.total_deductions)}`} neg strong />
       <Row k="Net payable" v={inr(v.net_payable)} strong />
       <Row k="Paid so far" v={inr(v.paid)} />
       <Row k="Outstanding balance" v={inr(v.balance)} strong />
       {v.overpaid > 0 && <Row k="Overpaid" v={inr(v.overpaid)} neg />}
-      <div className="mt-2 text-xs text-stone-500">Paid leave used: {b.paid_leave_days} day(s). Daily rate {inr(b.daily_rate)}. {v.accruing && "Period in progress — amounts are earned till today."}</div>
+      <div className="mt-2 text-xs text-stone-500">Paid leave used: {b.paid_leave_days} day(s). Daily rate {inr(b.daily_rate)}. Advance balance still to recover after this period: {inr(v.advance_outstanding ?? Math.max(v.advance_available - v.advance_recovery, 0))}. {v.accruing && "Period in progress — amounts are earned till today."}</div>
     </div>
   );
 };
@@ -49,8 +54,8 @@ function PayForm({ d, oid, onDone }) {
   if (d.balance <= 0) return <div className="rounded-lg bg-emerald-50 p-4 text-sm text-emerald-800">Nothing outstanding for this period.</div>;
   return (
     <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2" data-testid="pay-form">
-      {d.advance_outstanding + d.advance_recovery > 0 && (
-        <Field label="Recover from advance (₹)" hint={`Outstanding advance: ${inr(d.advance_outstanding)}. Balance updates after saving.`}>
+      {d.advance_available > 0 && (
+        <Field label="Recover from advance (₹)" hint={`Applied automatically (max ${inr(d.advance_max)}). Any remaining advance carries forward.`}>
           <input type="number" min="0" step="0.01" className="inp" value={f.advance_recovery} onChange={(e) => set("advance_recovery", e.target.value)} data-testid="pay-advance-recovery-input" />
         </Field>
       )}

@@ -1,19 +1,15 @@
 import axios from "axios";
 
-export const TOKEN_KEY = "sb_token";
-export const api = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api` });
+export const api = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api`, withCredentials: true });
 
-api.interceptors.request.use((c) => {
-  const t = localStorage.getItem(TOKEN_KEY);
-  if (t) c.headers.Authorization = `Bearer ${t}`;
-  return c;
-});
+localStorage.removeItem("sb_token");
+
+const PUBLIC_PATHS = ["/login", "/signup", "/forgot"];
 
 api.interceptors.response.use(
   (r) => r,
   (e) => {
-    if (e.response?.status === 401 && !String(e.config?.url).startsWith("/auth/")) {
-      localStorage.removeItem(TOKEN_KEY);
+    if (e.response?.status === 401 && !String(e.config?.url).startsWith("/auth/") && !PUBLIC_PATHS.includes(window.location.pathname)) {
       window.location.href = "/login";
     }
     return Promise.reject(e);

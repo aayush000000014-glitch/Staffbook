@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api, TOKEN_KEY } from "@/lib/api";
+import { api } from "@/lib/api";
 
 const AuthCtx = createContext(null);
 
@@ -7,15 +7,10 @@ export function AuthProvider({ children }) {
   const [state, setState] = useState({ loading: true, user: null, business: null });
 
   const refresh = useCallback(async () => {
-    if (!localStorage.getItem(TOKEN_KEY)) {
-      setState({ loading: false, user: null, business: null });
-      return;
-    }
     try {
       const { data } = await api.get("/auth/me");
       setState({ loading: false, user: data.user, business: data.business });
     } catch {
-      localStorage.removeItem(TOKEN_KEY);
       setState({ loading: false, user: null, business: null });
     }
   }, []);
@@ -24,8 +19,7 @@ export function AuthProvider({ children }) {
     refresh();
   }, [refresh]);
 
-  const signIn = async (token) => {
-    localStorage.setItem(TOKEN_KEY, token);
+  const signIn = async () => {
     await refresh();
   };
 
@@ -33,10 +27,10 @@ export function AuthProvider({ children }) {
     try {
       await api.post("/auth/logout");
     } catch {
-      /* token may already be invalid */
+      /* session may already be gone */
     }
-    localStorage.removeItem(TOKEN_KEY);
     setState({ loading: false, user: null, business: null });
+    window.location.replace("/login");
   };
 
   return <AuthCtx.Provider value={{ ...state, refresh, signIn, signOut }}>{children}</AuthCtx.Provider>;

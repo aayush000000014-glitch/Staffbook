@@ -99,7 +99,7 @@ async def staff_profile(sid: str, ctx=Depends(owner_ctx)):
     adv = await db.advances.find({"business_id": ctx.bid, "staff_id": sid}, {"_id": 0}).sort("date", -1).to_list(None)
     fines = await db.fines.find({"business_id": ctx.bid, "staff_id": sid}, {"_id": 0}).sort("date", -1).to_list(None)
     txns = await db.transactions.find({"business_id": ctx.bid, "staff_id": sid}, {"_id": 0}).sort("date", -1).to_list(None)
-    recs = sorted(L.recov.get(sid, []), key=lambda r: r.get("date") or "", reverse=True)
+    recs = L.allocations(sid)
     login = await db.users.find_one({"staff_id": sid, "business_id": ctx.bid}, {"_id": 0, "phone": 1})
     month_end = min(t, D(s["leaving_date"])) if s.get("leaving_date") else t
     settlement = None
@@ -250,7 +250,8 @@ async def reverse_advance(aid: str, body: ReverseIn, ctx=Depends(owner_ctx)):
     if not a:
         raise HTTPException(404, "Active advance not found")
     L = await load_ledger(ctx.bid, a["staff_id"])
-    if L.advance_summary(a["staff_id"])["outstanding"] - a["amount"] < -0.001:
+    summ = L.advance_summary(a["staff_id"])
+    if summ["total"] - a["amount"] < summ["recovered_paid"] - 0.001:
         raise HTTPException(409, "Part of this advance was already recovered from salary. Adjust those recoveries first.")
     await db.advances.update_one({"id": aid}, {"$set": {"status": "reversed", "reversal_reason": body.reason, "reversed_at": now_iso()}})
     await audit(ctx.bid, ctx.user, "advance.reverse", "advance", aid, {"reason": body.reason, "amount": a["amount"]})

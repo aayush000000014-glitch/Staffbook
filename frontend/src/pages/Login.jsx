@@ -18,7 +18,7 @@ export default function Login() {
     setErr("");
     try {
       const { data } = await api.post("/auth/login", { phone, password });
-      await signIn(data.token);
+      await signIn();
       nav(homeFor(data.user, { onboarded: true }), { replace: true });
     } catch (ex) {
       setErr(errMsg(ex));

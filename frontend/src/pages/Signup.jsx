@@ -19,8 +19,8 @@ export default function Signup() {
     setBusy(true);
     setErr("");
     try {
-      const { data } = await api.post("/auth/signup", f);
-      await signIn(data.token);
+      await api.post("/auth/signup", f);
+      await signIn();
       nav("/onboarding", { replace: true });
     } catch (ex) {
       setErr(errMsg(ex));

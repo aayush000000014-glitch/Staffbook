@@ -19,6 +19,7 @@ class SettingsIn(BaseModel):
     paid_leave_quota: int = Field(ge=0, le=5)
     leave_quota_period: str = Field(pattern="^(monthly|yearly)$")
     allow_future_attendance_days: int = Field(default=31, ge=0, le=90)
+    carry_forward_fines: bool = False
 
 
 class ProfileIn(BaseModel):

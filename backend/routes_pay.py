@@ -44,27 +44,25 @@ async def get_ob(bid, oid):
 
 
 async def set_recovery(ctx, ob, amount: float, on_date: str):
+    """Store (freeze) the advance recovery for this salary period."""
     L = await load_ledger(ctx.bid, ob["staff_id"])
-    existing = L.recov_by_ob.get(ob["id"])
-    cur = existing["amount"] if existing else 0.0
-    if abs(cur - amount) < 0.005:
-        return
-    available = L.advance_summary(ob["staff_id"])["outstanding"] + cur
-    if amount > available + 0.005:
-        raise HTTPException(422, f"Advance recovery cannot exceed outstanding advance (₹{r2(available):,.2f})")
     v = L.ob_view(ob)
-    max_ded = r2(v["breakdown"]["earned"] - v["breakdown"]["late_fines"] - v["manual_fines"] - v["other_deductions"])
-    if amount > max_ded + 0.005:
-        raise HTTPException(422, f"Advance recovery cannot exceed earned salary after deductions (₹{max(max_ded, 0):,.2f})")
-    if amount <= 0:
-        await db.advance_recoveries.delete_one({"obligation_id": ob["id"], "business_id": ctx.bid})
-    else:
-        await db.advance_recoveries.update_one(
-            {"obligation_id": ob["id"]},
-            {"$set": {"amount": r2(amount), "date": on_date, "business_id": ctx.bid, "staff_id": ob["staff_id"],
-                      "period_start": ob["period_start"], "period_end": ob["period_end"], "updated_at": now_iso()},
-             "$setOnInsert": {"id": new_id()}}, upsert=True)
-    await audit(ctx.bid, ctx.user, "advance.recovery_set", "obligation", ob["id"], {"from": cur, "to": r2(amount)})
+    existing = L.recov_by_ob.get(ob["id"])
+    cur = v["advance_recovery"]
+    amount = r2(amount)
+    if existing and abs(existing["amount"] - amount) < 0.005:
+        return
+    if amount > v["advance_available"] + 0.005:
+        raise HTTPException(422, f"Advance recovery cannot exceed outstanding advance (₹{v['advance_available']:,.2f})")
+    if amount > v["advance_max"] + 0.005:
+        raise HTTPException(422, f"Advance recovery cannot exceed earned salary after fines and deductions (₹{v['advance_max']:,.2f})")
+    await db.advance_recoveries.update_one(
+        {"obligation_id": ob["id"]},
+        {"$set": {"amount": amount, "date": on_date, "business_id": ctx.bid, "staff_id": ob["staff_id"],
+                  "period_start": ob["period_start"], "period_end": ob["period_end"], "updated_at": now_iso()},
+         "$setOnInsert": {"id": new_id()}}, upsert=True)
+    if abs(cur - amount) >= 0.005:
+        await audit(ctx.bid, ctx.user, "advance.recovery_set", "obligation", ob["id"], {"from": cur, "to": amount})
 
 
 @router.get("/obligations")
@@ -107,8 +105,10 @@ async def pay(oid: str, body: PayIn, ctx=Depends(owner_ctx)):
         raise HTTPException(422, "Payment date cannot be in the future")
     if await db.transactions.find_one({"client_ref": body.client_ref}):
         raise HTTPException(409, "This payment was already recorded")
-    if body.advance_recovery is not None:
-        await set_recovery(ctx, ob, body.advance_recovery, body.date)
+    if body.advance_recovery is None:
+        pre = (await load_ledger(ctx.bid, ob["staff_id"])).ob_view(ob)
+        body.advance_recovery = pre["advance_recovery"]
+    await set_recovery(ctx, ob, body.advance_recovery, body.date)
     L = await load_ledger(ctx.bid, ob["staff_id"])
     v = L.ob_view(ob)
     if body.amount > v["balance"] + 0.005:

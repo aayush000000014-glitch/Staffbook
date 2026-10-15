@@ -26,7 +26,8 @@ def col(key, label, money=False):
 OB_COLS = [col("staff_name", "Staff"), col("period", "Salary Period"), col("due_date", "Due Date"),
            col("gross", "Gross", M), col("attendance_deduction", "Attendance Ded.", M), col("earned", "Earned", M),
            col("late_fines", "Late Fines", M), col("manual_fines", "Manual Fines", M),
-           col("advance_recovery", "Advance Rec.", M), col("other_deductions", "Other Ded.", M),
+           col("fines_deducted", "Fines Deducted", M), col("advance_recovery", "Advance Rec.", M),
+           col("other_deductions", "Other Ded.", M), col("total_deductions", "Total Ded.", M),
            col("net_payable", "Net Payable", M), col("paid", "Paid", M), col("balance", "Balance", M), col("status", "Status")]
 
 
@@ -34,8 +35,9 @@ def ob_row(v):
     b = v["breakdown"]
     return {"staff_name": v["staff_name"], "period": f"{v['period_start']} to {v['period_end']}", "due_date": v["due_date"],
             "gross": b["gross"], "attendance_deduction": b["attendance_deduction"], "earned": b["earned"],
-            "late_fines": b["late_fines"], "manual_fines": v["manual_fines"], "advance_recovery": v["advance_recovery"],
-            "other_deductions": v["other_deductions"], "net_payable": v["net_payable"], "paid": v["paid"],
+            "late_fines": b["late_fines"], "manual_fines": v["manual_fines"], "fines_deducted": v["fines_deducted"],
+            "advance_recovery": v["advance_recovery"], "other_deductions": v["other_deductions"],
+            "total_deductions": v["total_deductions"], "net_payable": v["net_payable"], "paid": v["paid"],
             "balance": v["balance"], "status": v["status"].replace("_", " ")}
 
 
@@ -89,7 +91,7 @@ async def build(kind, ctx, month: Optional[str], staff_id: Optional[str]):
                  "period": f"{x['period_start']} to {x['period_end']}", "method": x["method"].upper(), "note": x.get("note"),
                  "amount": x["amount"]} for x in L.all_txns if x["date"].startswith(month)]
     elif kind == "advances":
-        cols = [col("name", "Staff"), col("advances_total", "Total Advances", M), col("recovered_total", "Recovered (all)", M),
+        cols = [col("name", "Staff"), col("advances_total", "Total Advances", M), col("recovered_total", "Recovered / Scheduled", M),
                 col("outstanding", "Outstanding", M), col("advance_month", "Advanced This Month", M),
                 col("recovered_month", "Recovered This Month", M), col("manual_fines", "Manual Fines (month)", M),
                 col("late_fines", "Late Fines (month)", M)]
@@ -98,7 +100,7 @@ async def build(kind, ctx, month: Optional[str], staff_id: Optional[str]):
             sid = s["id"]
             a = L.advance_summary(sid)
             adv_m = r2(sum(x["amount"] for x in L.advances.get(sid, []) if x["date"].startswith(month)))
-            rec_m = r2(sum(x["amount"] for x in L.recov.get(sid, []) if (x.get("date") or "").startswith(month)))
+            rec_m = L.adv_recovered_in_month(sid, month)
             fines_m = r2(sum(f["amount"] for f in L.fines.get(sid, []) if f["date"].startswith(month)))
             late_m = r2(sum(x.get("fine_amount") or 0 for x in L.att.get(sid, []) if x["date"].startswith(month)))
             if not (a["total"] or fines_m or late_m):

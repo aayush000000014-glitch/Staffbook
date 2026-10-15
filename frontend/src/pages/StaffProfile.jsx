@@ -150,9 +150,9 @@ export default function StaffProfile() {
               <div className="flex items-center gap-2"><StatusBadge status={a.status === "active" ? "valid" : "reversed"} label={a.status} />{a.status === "active" && <button className="btn-outline btn-sm" onClick={() => setRev({ kind: "advances", item: a })} data-testid="advance-reverse-btn">Reverse</button>}</div>
             </div>
           )} />
-          <h4 className="mb-2 mt-5 text-sm font-semibold">Salary recoveries</h4>
+          <h4 className="mb-2 mt-5 text-sm font-semibold">Salary recoveries (applied automatically, remaining balance carries forward)</h4>
           <List items={d.recoveries} empty="No recoveries yet" testid="profile-recoveries" render={(r) => (
-            <div key={r.obligation_id} className="flex justify-between p-3 text-sm"><span>{fmtDate(r.period_start)} – {fmtDate(r.period_end)}</span><span className="font-num">{inr(r.amount)}</span></div>
+            <div key={r.obligation_id} className="flex justify-between p-3 text-sm"><span>{fmtDate(r.period_start)} – {fmtDate(r.period_end)} <span className="text-xs text-stone-500">· {r.mode === "auto" ? "scheduled" : "recorded"}</span></span><span className="font-num">{inr(r.amount)}</span></div>
           )} />
         </TabsContent>
         <TabsContent value="fines">

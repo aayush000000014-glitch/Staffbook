@@ -1,10 +1,12 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from core import db, new_id, now_iso, hash_pw, verify_pw, norm_phone, make_token, public_user, current_user, NOPID
+from core import (db, new_id, now_iso, hash_pw, verify_pw, norm_phone, public_user, current_user, NOPID,
+                  create_session, session_token, set_session_cookie, clear_session_cookie, revoke_sessions,
+                  _hash_token, SESSION_DAYS)
 from services import DEFAULT_SETTINGS
 
 router = APIRouter(prefix="/auth")
@@ -61,7 +63,7 @@ def _norm_answer(a):
 
 
 @router.post("/signup")
-async def signup(body: SignupIn):
+async def signup(body: SignupIn, request: Request, response: Response):
     phone = norm_phone(body.phone)
     if await db.users.find_one({"phone": phone}):
         raise HTTPException(409, "An account with this mobile number already exists")
@@ -77,11 +79,12 @@ async def signup(body: SignupIn):
         "settings": dict(DEFAULT_SETTINGS), "created_at": now_iso()})
     await db.memberships.insert_one({"id": new_id(), "user_id": uid, "business_id": bid, "role": "owner",
                                      "created_at": now_iso()})
-    return {"token": make_token(user), "user": public_user(user)}
+    await create_session(user, request, response)
+    return {"user": public_user(user)}
 
 
 @router.post("/login")
-async def login(body: LoginIn, request: Request):
+async def login(body: LoginIn, request: Request, response: Response):
     phone = norm_phone(body.phone)
     ident = f"{request.client.host if request.client else 'x'}:{phone}"
     await _check_lock(ident)
@@ -92,11 +95,18 @@ async def login(body: LoginIn, request: Request):
     if user.get("disabled"):
         raise HTTPException(403, "This login has been disabled")
     await db.login_attempts.delete_one({"identifier": ident})
-    return {"token": make_token(user), "user": public_user(user)}
+    await create_session(user, request, response)
+    return {"user": public_user(user)}
 
 
 @router.get("/me")
-async def me(user=Depends(current_user)):
+async def me(request: Request, response: Response, user=Depends(current_user)):
+    sess = request.state.session
+    exp = sess["expires_at_dt"].replace(tzinfo=timezone.utc) if sess["expires_at_dt"].tzinfo is None else sess["expires_at_dt"]
+    if exp - datetime.now(timezone.utc) < timedelta(days=SESSION_DAYS - 1):
+        await db.sessions.update_one({"token_hash": sess["token_hash"]},
+                                     {"$set": {"expires_at_dt": datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)}})
+        set_session_cookie(response, session_token(request))
     biz = None
     if user.get("business_id"):
         b = await db.businesses.find_one({"id": user["business_id"]}, NOPID)
@@ -106,7 +116,11 @@ async def me(user=Depends(current_user)):
 
 
 @router.post("/logout")
-async def logout(user=Depends(current_user)):
+async def logout(request: Request, response: Response):
+    token = session_token(request)
+    if token:
+        await db.sessions.delete_one({"token_hash": _hash_token(token)})
+    clear_session_cookie(response)
     return {"ok": True}
 
 
@@ -131,15 +145,17 @@ async def recovery_reset(body: RecoveryIn, request: Request):
         raise HTTPException(401, "Security answer is incorrect")
     await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_pw(body.new_password)}})
     await db.login_attempts.delete_one({"identifier": ident})
+    await revoke_sessions(user["id"])
     return {"ok": True}
 
 
 @router.post("/change-password")
-async def change_password(body: ChangePwIn, user=Depends(current_user)):
+async def change_password(body: ChangePwIn, request: Request, user=Depends(current_user)):
     full = await db.users.find_one({"id": user["id"]}, NOPID)
     if not verify_pw(body.current_password, full["password_hash"]):
         raise HTTPException(401, "Current password is incorrect")
     await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_pw(body.new_password)}})
+    await revoke_sessions(user["id"], keep_hash=request.state.session["token_hash"])
     return {"ok": True}
 
 

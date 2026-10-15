@@ -27,7 +27,7 @@ app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,6 +59,23 @@ async def ensure_indexes():
     await db.notifications.create_index("key", unique=True)
     await db.notifications.create_index([("business_id", 1), ("created_at", -1)])
     await db.login_attempts.create_index("identifier")
+    await db.sessions.create_index("token_hash", unique=True)
+    await db.sessions.create_index("user_id")
+    await db.sessions.create_index("expires_at_dt", expireAfterSeconds=0)
+
+
+async def migrate_cycle_due_dates():
+    """Cycle due date = last (30th/40th) day of the cycle. Fix records created with the old start+N rule."""
+    from datetime import date, timedelta
+    async for ob in db.obligations.find({"schedule_type": {"$in": ["cycle30", "cycle40"]}}, {"_id": 0}):
+        n = 30 if ob["schedule_type"] == "cycle30" else 40
+        old = (date.fromisoformat(ob["period_start"]) + timedelta(days=n)).isoformat()
+        if ob["original_due_date"] == old:
+            new = (date.fromisoformat(ob["period_start"]) + timedelta(days=n - 1)).isoformat()
+            upd = {"original_due_date": new}
+            if ob["due_date"] == old:
+                upd["due_date"] = new
+            await db.obligations.update_one({"id": ob["id"]}, {"$set": upd})
 
 
 async def seed_super_admin():
@@ -80,6 +97,7 @@ async def seed_super_admin():
 @app.on_event("startup")
 async def startup():
     await ensure_indexes()
+    await migrate_cycle_due_dates()
     await seed_super_admin()
 
 

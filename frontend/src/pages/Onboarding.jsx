@@ -20,6 +20,10 @@ export const PolicyFields = ({ s, set }) => (
         <option value="monthly">Monthly</option><option value="yearly">Yearly</option>
       </select>
     </Field>
+    <label className="flex items-start gap-2 text-sm sm:col-span-2">
+      <input type="checkbox" className="mt-1 accent-[#8B1E2D]" checked={!!s.carry_forward_fines} onChange={(e) => set("carry_forward_fines", e.target.checked)} data-testid="carry-fines-checkbox" />
+      <span>Carry forward fines that exceed a period's salary <span className="block text-xs text-stone-500">If off, fines above the earned salary are not deducted. Advances above salary always carry forward.</span></span>
+    </label>
   </>
 );
 
@@ -29,7 +33,7 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const [biz, setBiz] = useState({ name: business?.name || "", logo: null, type: BUSINESS_TYPES[0], location: "" });
   const [owner, setOwner] = useState({ name: user?.name || "", email: "" });
-  const [s, setS] = useState({ salary_method: "fixed30", schedule_type: "fixed_date", pay_day: 10, late_fine_per_hour: 0, paid_leave_quota: 2, leave_quota_period: "monthly" });
+  const [s, setS] = useState({ salary_method: "fixed30", schedule_type: "fixed_date", pay_day: 10, late_fine_per_hour: 0, paid_leave_quota: 2, leave_quota_period: "monthly", carry_forward_fines: false });
   const [staff, setStaff] = useState([newStaff()]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);

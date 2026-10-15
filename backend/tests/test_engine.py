@@ -27,9 +27,23 @@ def test_fixed_date_month_end_clamp_and_leap():
 
 def test_cycles():
     p30 = generate_periods(staff(schedule_type="cycle30", joining_date="2026-01-15"), None, date(2026, 3, 1))
-    assert p30[0] == (date(2026, 1, 15), date(2026, 2, 13), date(2026, 2, 14))
+    assert p30[0] == (date(2026, 1, 15), date(2026, 2, 13), date(2026, 2, 13))
     p40 = generate_periods(staff(schedule_type="cycle40", joining_date="2026-01-01"), None, date(2026, 2, 15))
-    assert p40[0][2] == date(2026, 2, 10) and p40[1][0] == date(2026, 2, 10)
+    assert p40[0][2] == date(2026, 2, 9) and p40[1][0] == date(2026, 2, 10)
+
+
+def test_40_day_example_and_no_double_count():
+    s = staff(schedule_type="cycle40", joining_date="2026-09-07")
+    p = generate_periods(s, None, date(2026, 11, 30))
+    assert p[0] == (date(2026, 9, 7), date(2026, 10, 16), date(2026, 10, 16))
+    assert p[1][0] == date(2026, 10, 17)
+    a = compute_salary(15000, "fixed30", p[0][0], p[0][1], "2026-09-07", None, [], set())
+    assert a["gross"] == 20000.0  # 24 Sep days + 16 Oct days at 500/day
+    b = compute_salary(15000, "fixed30", "2026-10-17", "2026-10-31", "2026-09-07", None, [], set())
+    assert b["gross"] == 7000.0  # October total capped at monthly salary 15000
+    c = compute_salary(15000, "calendar", "2026-10-01", "2026-10-16", "2026-09-07", None, [], set())
+    d = compute_salary(15000, "calendar", "2026-10-17", "2026-10-31", "2026-09-07", None, [], set())
+    assert round(c["gross"] + d["gross"], 2) == 15000.0
 
 
 def test_leaving_stops_periods():

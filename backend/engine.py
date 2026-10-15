@@ -36,7 +36,7 @@ def next_period(staff: dict, start: date):
     else:
         n = 30 if st == "cycle30" else 40
         end = start + timedelta(days=n - 1)
-        due = start + timedelta(days=n)
+        due = end
     leave = D(staff.get("leaving_date"))
     if leave and leave < end:
         end = leave
@@ -56,7 +56,7 @@ def generate_periods(staff: dict, last_end, upto: date):
         if staff["schedule_type"] != "fixed_date" and cs and cs > join:
             stub_end = min(cs - timedelta(days=1), leave) if leave else cs - timedelta(days=1)
             if s <= upto:
-                out.append((s, stub_end, cs))
+                out.append((s, stub_end, stub_end))
             s = cs
     while s <= upto and (not leave or s <= leave):
         p = next_period(staff, s)
@@ -85,16 +85,27 @@ def compute_salary(salary, method, start, end, join, leave, exceptions, unpaid_l
     if e < s:
         return res
     sal = Decimal(str(salary))
+    jd, ld = D(join), D(leave) if leave else None
     rates, gross, cur, elig = {}, Decimal(0), s, 0
     while cur <= e:
         mdays = dim(cur.year, cur.month)
-        mend = date(cur.year, cur.month, mdays)
+        mfirst, mend = date(cur.year, cur.month, 1), date(cur.year, cur.month, mdays)
         b = min(mend, e)
-        days = (b - cur).days + 1
         rate = sal / 30 if method == "fixed30" else sal / mdays
         rates[(cur.year, cur.month)] = rate
-        gross += sal if (cur.day == 1 and b == mend) else rate * days
-        elig += days
+        emp_start = max(mfirst, jd)
+        emp_full = emp_start == mfirst and (ld is None or ld >= mend)
+
+        def cum(d):
+            # month-to-date earnings, capped so a calendar month never exceeds the monthly salary
+            if d < emp_start:
+                return Decimal(0)
+            if emp_full and d == mend:
+                return sal
+            return min(rate * ((d - emp_start).days + 1), sal)
+
+        gross += cum(b) - cum(cur - timedelta(days=1))
+        elig += (b - cur).days + 1
         cur = b + timedelta(days=1)
     ded, late_f, late_h = Decimal(0), Decimal(0), Decimal(0)
     for ex in exceptions:

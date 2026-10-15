@@ -9,6 +9,7 @@ from engine import D, r2, generate_periods, unpaid_leave_dates, compute_salary
 DEFAULT_SETTINGS = {
     "salary_method": "fixed30", "schedule_type": "fixed_date", "pay_day": 1, "late_fine_per_hour": 0.0,
     "paid_leave_quota": 0, "leave_quota_period": "monthly", "allow_future_attendance_days": 31,
+    "carry_forward_fines": False,
 }
 
 
@@ -57,6 +58,7 @@ class Ledger:
         self.txns = group(txns, "obligation_id")
         self.all_txns = txns
         self._unpaid = {}
+        self._alloc = {}
 
     def unpaid(self, sid):
         if sid not in self._unpaid:
@@ -70,21 +72,61 @@ class Ledger:
         return compute_salary(salary or s["monthly_salary"], method or s["salary_method"], start, end,
                               s["joining_date"], s.get("leaving_date"), self.att.get(sid, []), self.unpaid(sid))
 
+    def alloc(self, sid):
+        """Walk a staff member's salary periods in order, applying fines, other deductions and
+        advance recoveries without ever exceeding earned salary; carries excess advances forward."""
+        if sid in self._alloc:
+            return self._alloc[sid]
+        t = today()
+        obs = sorted([o for o in self.obligations if o["staff_id"] == sid and not o.get("cancelled")],
+                     key=lambda o: o["period_start"])
+        advs = self.advances.get(sid, [])
+        carry_ok = bool(self.settings.get("carry_forward_fines"))
+        out, allocated, fixed, carry = {}, 0.0, 0.0, 0.0
+        for ob in obs:
+            ps, pe = ob["period_start"], ob["period_end"]
+            accruing = D(pe) >= t
+            cutoff = min(D(pe), t)
+            if D(ps) > t:
+                cutoff = D(ps) - timedelta(days=1)
+            br = self.salary(sid, ps, cutoff, ob["monthly_salary"], ob["salary_method"])
+            earned = br["earned"]
+            manual = r2(sum(f["amount"] for f in self.fines.get(sid, []) if ps <= f["date"] <= pe))
+            carry_in = carry
+            fine_due = r2(br["late_fines"] + manual + carry_in)
+            fines_applied = r2(min(fine_due, earned))
+            excess = r2(fine_due - fines_applied)
+            room = r2(earned - fines_applied)
+            other = r2(min(ob.get("other_deductions") or 0, room))
+            room = r2(room - other)
+            adv_avail = r2(max(sum(a["amount"] for a in advs if a["date"] <= pe) - allocated, 0))
+            rec = self.recov_by_ob.get(ob["id"])
+            if rec:
+                adv, mode = r2(min(rec["amount"], room, adv_avail)), "fixed"
+                fixed = r2(fixed + adv)
+            elif self.txns.get(ob["id"]):
+                adv, mode = 0.0, "legacy"
+            else:
+                adv, mode = r2(min(adv_avail, room)), "auto"
+            allocated = r2(allocated + adv)
+            carry = excess if (carry_ok and not accruing) else 0.0
+            out[ob["id"]] = {"br": br, "manual": manual, "carry_in": carry_in, "fine_due": fine_due,
+                             "fines_applied": fines_applied, "fines_carried_out": carry,
+                             "fines_not_deducted": r2(excess - carry), "other": other, "adv": adv,
+                             "adv_avail": adv_avail, "adv_room": room, "adv_mode": mode, "accruing": accruing,
+                             "period_start": ps, "period_end": pe}
+        total_adv = r2(sum(a["amount"] for a in advs))
+        self._alloc[sid] = {"by_ob": out, "allocated": allocated, "fixed": fixed, "total_adv": total_adv}
+        return self._alloc[sid]
+
     def ob_view(self, ob):
         t = today()
         sid = ob["staff_id"]
         s = self.staff.get(sid, {})
-        cutoff = min(D(ob["period_end"]), t)
-        accruing = D(ob["period_end"]) >= t
-        if D(ob["period_start"]) > t:
-            cutoff = D(ob["period_start"]) - timedelta(days=1)
-        br = self.salary(sid, ob["period_start"], cutoff, ob["monthly_salary"], ob["salary_method"])
-        ps, pe = ob["period_start"], ob["period_end"]
-        manual = r2(sum(f["amount"] for f in self.fines.get(sid, []) if ps <= f["date"] <= pe))
-        rec = self.recov_by_ob.get(ob["id"])
-        adv = r2(rec["amount"]) if rec else 0.0
-        other = r2(ob.get("other_deductions") or 0)
-        net = r2(max(br["earned"] - br["late_fines"] - manual - adv - other, 0))
+        a = self.alloc(sid)["by_ob"][ob["id"]]
+        br, accruing, manual, adv, other = a["br"], a["accruing"], a["manual"], a["adv"], a["other"]
+        total_ded = r2(a["fines_applied"] + other + adv)
+        net = r2(max(br["earned"] - total_ded, 0))
         txns = self.txns.get(ob["id"], [])
         paid = r2(sum(x["amount"] for x in txns))
         balance = r2(net - paid)
@@ -101,8 +143,12 @@ class Ledger:
                                           "original_due_date", "monthly_salary", "salary_method",
                                           "schedule_type", "cancelled")},
                 "staff_name": s.get("name"), "designation": s.get("designation"), "staff_status": s.get("status"),
-                "breakdown": br, "manual_fines": manual, "advance_recovery": adv, "other_deductions": other,
-                "net_payable": net, "paid": paid, "balance": max(balance, 0.0), "overpaid": max(-balance, 0.0),
+                "breakdown": br, "manual_fines": manual, "late_fines": br["late_fines"],
+                "fines_carried_in": a["carry_in"], "fines_deducted": a["fines_applied"],
+                "fines_carried_out": a["fines_carried_out"], "fines_not_deducted": a["fines_not_deducted"],
+                "advance_recovery": adv, "advance_mode": a["adv_mode"], "advance_available": a["adv_avail"],
+                "advance_max": r2(min(a["adv_avail"], a["adv_room"])), "other_deductions": other,
+                "total_deductions": total_ded, "net_payable": net, "paid": paid, "balance": max(balance, 0.0), "overpaid": max(-balance, 0.0),
                 "status": status, "accruing": accruing, "partially_paid": paid > 0 and balance > 0,
                 "transactions_count": len(txns)}
 
@@ -110,15 +156,21 @@ class Ledger:
         return [self.ob_view(o) for o in self.obligations
                 if not o.get("cancelled") and (staff_id is None or o["staff_id"] == staff_id)]
 
+    def adv_recovered_in_month(self, sid, month):
+        return r2(sum(a["adv"] for a in self.alloc(sid)["by_ob"].values() if a["period_end"][:7] == month))
+
+    def allocations(self, sid):
+        return [{"obligation_id": oid, "period_start": a["period_start"], "period_end": a["period_end"],
+                 "amount": a["adv"], "mode": a["adv_mode"]}
+                for oid, a in sorted(self.alloc(sid)["by_ob"].items(), key=lambda x: x[1]["period_start"], reverse=True)
+                if a["adv"] > 0]
+
     def advance_summary(self, sid):
-        t = today()
-        total = r2(sum(a["amount"] for a in self.advances.get(sid, [])))
-        recs = self.recov.get(sid, [])
-        recovered = r2(sum(r["amount"] for r in recs))
-        month = t.strftime("%Y-%m")
-        this_month = r2(sum(r["amount"] for r in recs if (r.get("date") or "").startswith(month)))
-        return {"total": total, "recovered": recovered, "outstanding": r2(total - recovered),
-                "recovered_this_month": this_month}
+        al = self.alloc(sid)
+        month = today().strftime("%Y-%m")
+        cur = [a["adv"] for a in al["by_ob"].values() if a["accruing"] or a["period_end"][:7] == month]
+        return {"total": al["total_adv"], "recovered": al["allocated"], "recovered_paid": al["fixed"],
+                "outstanding": r2(max(al["total_adv"] - al["allocated"], 0)), "recovered_this_month": r2(sum(cur))}
 
     def leave_summary(self, sid):
         t = today()

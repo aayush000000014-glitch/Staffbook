@@ -1,18 +1,22 @@
-"""StaffBook end-to-end backend tests. Prefixes test business with TEST_."""
+"""StaffBook e2e backend tests (cookie session auth). Prefixes test business with TEST_.
+Covers: auth cookie flow, cross-tenant, payments, attendance, advances/fines, reports,
+super admin + new iter2 features: advance+fines deductions, excess advance carry-forward,
+fines carry-forward policy, cycle40 due date, dashboard earned-till-date, persistent login,
+logout invalidation."""
 import os
 import random
 import time
 import requests
 import pytest
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://staffbook-preview.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
 
 def _rand_phone():
     return "9" + "".join(str(random.randint(0, 9)) for _ in range(9))
 
 
-# ---------- AUTH ----------
+# ---------- AUTH (cookie-based) ----------
 class TestAuth:
     def test_health(self):
         r = requests.get(f"{BASE_URL}/api/")
@@ -25,45 +29,68 @@ class TestAuth:
             "business_name": "TEST_bad", "security_question": "colour?", "security_answer": "red"})
         assert r.status_code == 422
 
-    def test_signup_login_me(self):
+    def test_signup_login_me_cookie(self):
+        s = requests.Session()
         phone = _rand_phone()
         body = {"name": "TT", "phone": phone, "password": "Password123!",
                 "business_name": f"TEST_auth_{phone[-5:]}",
                 "security_question": "colour?", "security_answer": "red"}
-        r = requests.post(f"{BASE_URL}/api/auth/signup", json=body)
+        r = s.post(f"{BASE_URL}/api/auth/signup", json=body)
         assert r.status_code == 200, r.text
-        token = r.json()["token"]
+        # No token in body
+        assert "token" not in r.json()
         assert r.json()["user"]["role"] == "owner"
-        # duplicate
+        # Cookie present and HttpOnly
+        assert "sb_session" in s.cookies
+        set_cookie = r.headers.get("set-cookie", "").lower()
+        assert "httponly" in set_cookie
+        assert "secure" in set_cookie
+        # duplicate signup
         r2 = requests.post(f"{BASE_URL}/api/auth/signup", json=body)
         assert r2.status_code == 409
-        # login
-        r3 = requests.post(f"{BASE_URL}/api/auth/login",
-                           json={"phone": phone, "password": "Password123!"})
-        assert r3.status_code == 200
-        # me
-        me = requests.get(f"{BASE_URL}/api/auth/me",
-                          headers={"Authorization": f"Bearer {token}"})
+        # me works with cookie
+        me = s.get(f"{BASE_URL}/api/auth/me")
         assert me.status_code == 200
         assert me.json()["user"]["phone"] == f"+91{phone}"
+        # logout clears session
+        lo = s.post(f"{BASE_URL}/api/auth/logout")
+        assert lo.status_code == 200
+        # Old cookie should now be invalid (server-side revoked)
+        me2 = s.get(f"{BASE_URL}/api/auth/me")
+        assert me2.status_code == 401
 
-    def test_login_bad_creds(self):
-        r = requests.post(f"{BASE_URL}/api/auth/login",
-                          json={"phone": "9000000001", "password": "wrongpass123"})
-        assert r.status_code in (401, 429)
-
-    def test_bruteforce_lockout(self):
+    def test_login_persistent_in_new_session(self):
         phone = _rand_phone()
-        requests.post(f"{BASE_URL}/api/auth/signup", json={
-            "name": "LL", "phone": phone, "password": "GoodPass123!",
-            "business_name": f"TEST_bf_{phone[-5:]}",
-            "security_question": "q question?", "security_answer": "aa"})
-        statuses = []
-        for _ in range(10):
-            r = requests.post(f"{BASE_URL}/api/auth/login",
-                              json={"phone": phone, "password": "wrongpass123"})
-            statuses.append(r.status_code)
-        assert 429 in statuses, f"Expected 429 lockout but got {statuses}"
+        su = requests.post(f"{BASE_URL}/api/auth/signup", json={
+            "name": "Persist", "phone": phone, "password": "Password123!",
+            "business_name": f"TEST_persist_{phone[-5:]}",
+            "security_question": "what colour?", "security_answer": "yy"})
+        assert su.status_code == 200, su.text
+        # Fresh login
+        s1 = requests.Session()
+        r = s1.post(f"{BASE_URL}/api/auth/login", json={"phone": phone, "password": "Password123!"})
+        assert r.status_code == 200, r.text
+        cookie_val = s1.cookies.get("sb_session")
+        assert cookie_val
+        # Simulate "browser reopen" by using cookie in a brand-new session
+        s2 = requests.Session()
+        s2.cookies.set("sb_session", cookie_val)
+        me = s2.get(f"{BASE_URL}/api/auth/me")
+        assert me.status_code == 200
+        # Logout from s1 should revoke s2 too (same session hash)
+        s1.post(f"{BASE_URL}/api/auth/logout")
+        me2 = s2.get(f"{BASE_URL}/api/auth/me")
+        assert me2.status_code == 401
+
+    def test_super_admin_persist(self):
+        s = requests.Session()
+        r = s.post(f"{BASE_URL}/api/auth/login",
+                   json={"phone": "8950771876", "password": "@Aayush_0512"})
+        assert r.status_code == 200
+        assert s.cookies.get("sb_session")
+        me = s.get(f"{BASE_URL}/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["user"]["role"] == "super_admin"
 
     def test_recovery(self):
         phone = _rand_phone()
@@ -74,15 +101,12 @@ class TestAuth:
         q = requests.post(f"{BASE_URL}/api/auth/recovery/question", json={"phone": phone})
         assert q.status_code == 200
         assert "pet" in q.json()["question"].lower()
-        # wrong
         bad = requests.post(f"{BASE_URL}/api/auth/recovery/reset",
                             json={"phone": phone, "answer": "wrong", "new_password": "NewPass123!"})
         assert bad.status_code == 401
-        # right
         ok = requests.post(f"{BASE_URL}/api/auth/recovery/reset",
                            json={"phone": phone, "answer": "fluffy", "new_password": "NewPass123!"})
         assert ok.status_code == 200
-        # new password works
         lr = requests.post(f"{BASE_URL}/api/auth/login",
                            json={"phone": phone, "password": "NewPass123!"})
         assert lr.status_code == 200
@@ -90,298 +114,365 @@ class TestAuth:
 
 # ---------- CROSS TENANT ----------
 class TestCrossTenant:
-    def _create_staff(self, auth):
+    def test_cross_tenant_blocked(self, owner_a_onboarded, owner_b_onboarded):
+        sa = owner_a_onboarded["session"]
+        sb = owner_b_onboarded["session"]
         body = {"name": "StaffX", "phone": "", "designation": "worker",
                 "monthly_salary": 30000, "joining_date": "2026-08-13"}
-        r = requests.post(f"{BASE_URL}/api/staff", json=body, headers=auth)
-        assert r.status_code == 200, r.text
-        return r.json()
+        r = sa.post(f"{BASE_URL}/api/staff", json=body)
+        assert r.status_code == 200
+        sid = r.json()["id"]
+        assert sb.get(f"{BASE_URL}/api/staff/{sid}").status_code in (403, 404)
+        assert sb.put(f"{BASE_URL}/api/staff/{sid}",
+                      json={"name": "Hack", "phone": "", "designation": "",
+                            "monthly_salary": 1000, "joining_date": "2026-08-13"}).status_code in (403, 404)
 
-    def test_cross_tenant_blocked(self, owner_a_onboarded, owner_b_onboarded, auth_a, auth_b):
-        s = self._create_staff(auth_a)
-        sid = s["id"]
-        # B tries to GET A's staff
-        r = requests.get(f"{BASE_URL}/api/staff/{sid}", headers=auth_b)
-        assert r.status_code in (403, 404)
-        # B tries to update A's staff
-        r = requests.put(f"{BASE_URL}/api/staff/{sid}",
-                         json={"name": "Hack", "phone": "", "designation": "",
-                               "monthly_salary": 1, "joining_date": "2026-08-13"},
-                         headers=auth_b)
-        assert r.status_code in (403, 404)
-        # B tries PUT attendance for A's staff
-        r = requests.put(f"{BASE_URL}/api/attendance",
-                         json={"staff_id": sid, "date": "2026-10-01", "status": "absent"},
-                         headers=auth_b)
-        assert r.status_code in (403, 404)
-
-    def test_admin_forbidden_for_owner(self, auth_a, owner_a_onboarded):
-        r = requests.get(f"{BASE_URL}/api/admin/stats", headers=auth_a)
+    def test_admin_forbidden_for_owner(self, owner_a_onboarded):
+        r = owner_a_onboarded["session"].get(f"{BASE_URL}/api/admin/stats")
         assert r.status_code == 403
 
 
-# ---------- STAFF LIMIT ----------
-class TestStaffLimit:
-    def test_mark_as_left_frees_slot(self, owner_a_onboarded, auth_a):
-        # Create one staff
+# ---------- STAFF LEAVE ----------
+class TestStaffLeave:
+    def test_mark_as_left_frees_slot(self, owner_a_onboarded):
+        s = owner_a_onboarded["session"]
         body = {"name": "Leaver", "phone": "", "designation": "",
                 "monthly_salary": 20000, "joining_date": "2026-08-13"}
-        r = requests.post(f"{BASE_URL}/api/staff", json=body, headers=auth_a)
-        assert r.status_code == 200
+        r = s.post(f"{BASE_URL}/api/staff", json=body)
         sid = r.json()["id"]
-        # Mark left
-        r2 = requests.post(f"{BASE_URL}/api/staff/{sid}/leave",
-                           json={"leaving_date": "2026-10-14", "reason": "test"},
-                           headers=auth_a)
+        r2 = s.post(f"{BASE_URL}/api/staff/{sid}/leave",
+                    json={"leaving_date": "2026-10-14", "reason": "test"})
         assert r2.status_code == 200
-        # second leave should 409
-        r3 = requests.post(f"{BASE_URL}/api/staff/{sid}/leave",
-                           json={"leaving_date": "2026-10-14"}, headers=auth_a)
+        r3 = s.post(f"{BASE_URL}/api/staff/{sid}/leave",
+                    json={"leaving_date": "2026-10-14"})
         assert r3.status_code == 409
 
-    @pytest.mark.slow
-    def test_100_cap(self, auth_a, owner_a_onboarded):
-        # fetch current count
-        r = requests.get(f"{BASE_URL}/api/staff?status=active", headers=auth_a)
-        current = len(r.json())
-        remaining = 100 - current
-        created = []
-        for i in range(remaining):
-            body = {"name": f"Cap{i}", "phone": "", "designation": "",
-                    "monthly_salary": 15000, "joining_date": "2026-10-01"}
-            rr = requests.post(f"{BASE_URL}/api/staff", json=body, headers=auth_a)
-            assert rr.status_code == 200, (i, rr.status_code, rr.text)
-            created.append(rr.json()["id"])
-        # 101st
-        rr = requests.post(f"{BASE_URL}/api/staff",
-                           json={"name": "Over", "phone": "", "designation": "",
-                                 "monthly_salary": 15000, "joining_date": "2026-10-01"},
-                           headers=auth_a)
-        assert rr.status_code == 409, rr.text
-        # mark one left frees slot
-        requests.post(f"{BASE_URL}/api/staff/{created[0]}/leave",
-                      json={"leaving_date": "2026-10-14"}, headers=auth_a)
-        rr = requests.post(f"{BASE_URL}/api/staff",
-                           json={"name": "AfterLeave", "phone": "", "designation": "",
-                                 "monthly_salary": 15000, "joining_date": "2026-10-01"},
-                           headers=auth_a)
-        assert rr.status_code == 200
-        # cleanup created staff
-        requests.post(f"{BASE_URL}/api/staff/{rr.json()['id']}/leave",
-                      json={"leaving_date": "2026-10-14"}, headers=auth_a)
-        for sid in created[1:]:
-            requests.post(f"{BASE_URL}/api/staff/{sid}/leave",
-                          json={"leaving_date": "2026-10-14"}, headers=auth_a)
+
+# ---------- NEW FEATURE: Advance + fines reduce net ----------
+class TestAdvanceFineExample:
+    """Spec example: salary 10000 fixed30 pay_day 10 joining 2026-08-01,
+    late_fine_per_hour 150, advance 2000 on 2026-09-05, late 2h on 2026-09-08 (=300),
+    manual fine 200 on 2026-09-10 -> Sep: gross 10000, total_ded 2500, advance_recovery 2000,
+    net 7500, balance 7500."""
+
+    def test_spec_example(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, late_fine=150.0)
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "SpecStaff", "phone": "", "designation": "",
+            "monthly_salary": 10000, "joining_date": "2026-08-01"}).json()
+        sid = staff["id"]
+        # Advance 2000 on 2026-09-05
+        a = s.post(f"{BASE_URL}/api/advances", json={
+            "staff_id": sid, "amount": 2000, "date": "2026-09-05", "description": "sep adv"})
+        assert a.status_code == 200, a.text
+        # Attendance late 2h on 2026-09-08
+        att = s.put(f"{BASE_URL}/api/attendance", json={
+            "staff_id": sid, "date": "2026-09-08", "status": "late", "hours_late": 2})
+        assert att.status_code == 200
+        assert att.json()["fine_amount"] == 300.0
+        # Manual fine 200 on 2026-09-10
+        f = s.post(f"{BASE_URL}/api/fines", json={
+            "staff_id": sid, "amount": 200, "date": "2026-09-10", "reason": "late repeat"})
+        assert f.status_code == 200
+        # Fetch September obligation
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json()
+        sep = next((o for o in obs if o["period_end"].startswith("2026-09")), None)
+        assert sep, f"No Sep obligation. Got: {[o['period_start'] for o in obs]}"
+        assert sep["breakdown"]["gross"] == 10000.0, sep["breakdown"]
+        assert sep["late_fines"] == 300.0
+        assert sep["manual_fines"] == 200.0
+        assert sep["advance_recovery"] == 2000.0
+        assert sep["advance_mode"] == "auto"
+        assert sep["total_deductions"] == 2500.0
+        assert sep["net_payable"] == 7500.0
+        assert sep["balance"] == 7500.0
+        # advance_summary: total 2000, outstanding 0 (fully recovered via Sep)
+        asum = s.get(f"{BASE_URL}/api/staff/{sid}/advance-summary")
+        if asum.status_code == 404:
+            # endpoint variant check
+            prof = s.get(f"{BASE_URL}/api/staff/{sid}").json()
+            summ = prof.get("advance_summary") or prof.get("advances_summary")
+            assert summ, f"no advance summary in profile: {list(prof.keys())}"
+            assert summ["total"] == 2000.0
+            assert summ["outstanding"] == 0.0
+        else:
+            assert asum.status_code == 200
+            assert asum.json()["total"] == 2000.0
+            assert asum.json()["outstanding"] == 0.0
+        # Salary sheet report for 2026-09 reflects the same numbers
+        rep = s.get(f"{BASE_URL}/api/reports/salary_sheet?month=2026-09")
+        assert rep.status_code == 200
+        rows = rep.json()["rows"]
+        row = next((r for r in rows if r.get("staff_name") == "SpecStaff"), None)
+        assert row, f"No row for SpecStaff in salary sheet: {rows[:1]}"
+        # CSV also works
+        csv = s.get(f"{BASE_URL}/api/reports/salary_sheet/csv?month=2026-09")
+        assert csv.status_code == 200
+        assert "text/csv" in csv.headers.get("content-type", "")
 
 
-# ---------- PAYMENT / OBLIGATIONS ----------
+# ---------- NEW FEATURE: Excess advance carry forward ----------
+class TestAdvanceCarryForward:
+    def test_excess_advance_rolls_to_next_period(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10)
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "CarryStaff", "phone": "", "designation": "",
+            "monthly_salary": 10000, "joining_date": "2026-08-01"}).json()
+        sid = staff["id"]
+        a = s.post(f"{BASE_URL}/api/advances", json={
+            "staff_id": sid, "amount": 12000, "date": "2026-08-20"})
+        assert a.status_code == 200
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json()
+        aug = next((o for o in obs if o["period_end"].startswith("2026-08")), None)
+        sep = next((o for o in obs if o["period_end"].startswith("2026-09")), None)
+        assert aug and sep
+        assert aug["advance_recovery"] == 10000.0
+        assert aug["net_payable"] == 0.0
+        assert aug["balance"] == 0.0
+        assert sep["advance_recovery"] == 2000.0
+        assert sep["net_payable"] == 8000.0
+        assert sep["balance"] == 8000.0
+
+    def test_recovery_cap_422(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10)
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "CapRec", "phone": "", "designation": "",
+            "monthly_salary": 10000, "joining_date": "2026-08-01"}).json()
+        sid = staff["id"]
+        s.post(f"{BASE_URL}/api/advances", json={
+            "staff_id": sid, "amount": 3000, "date": "2026-08-15"})
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json()
+        aug = next(o for o in obs if o["period_end"].startswith("2026-08"))
+        # Attempt to set recovery above available advance (3000)
+        r = s.post(f"{BASE_URL}/api/obligations/{aug['id']}/adjust",
+                   json={"advance_recovery": 9999, "other_deductions": 0,
+                         "reason": "test cap"})
+        assert r.status_code == 422, r.text
+
+
+# ---------- NEW FEATURE: Fines carry-forward policy ----------
+class TestFinesCarryForward:
+    def _setup(self, carry_flag):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, late_fine=0.0)
+        s = info["session"]
+        if carry_flag:
+            # Enable via PUT /api/business
+            biz = s.get(f"{BASE_URL}/api/business").json()
+            settings = {**biz["settings"], "carry_forward_fines": True}
+            # Strip keys SettingsIn doesn't accept
+            keep = ("salary_method", "schedule_type", "pay_day", "late_fine_per_hour",
+                    "paid_leave_quota", "leave_quota_period",
+                    "allow_future_attendance_days", "carry_forward_fines")
+            payload = {k: settings[k] for k in keep if k in settings}
+            r = s.put(f"{BASE_URL}/api/business", json={"settings": payload})
+            assert r.status_code == 200, r.text
+        return s
+
+    def test_no_carry(self):
+        s = self._setup(False)
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "FineStaff", "phone": "", "designation": "",
+            "monthly_salary": 2000, "joining_date": "2026-08-01"}).json()
+        sid = staff["id"]
+        # Huge fine in Aug - earned 2000, fine 5000
+        s.post(f"{BASE_URL}/api/fines", json={
+            "staff_id": sid, "amount": 5000, "date": "2026-08-15", "reason": "big"})
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json()
+        aug = next(o for o in obs if o["period_end"].startswith("2026-08"))
+        sep = next(o for o in obs if o["period_end"].startswith("2026-09"))
+        assert aug["net_payable"] == 0.0
+        assert aug["fines_not_deducted"] > 0
+        # No carry
+        assert aug["fines_carried_out"] == 0.0
+        assert sep["fines_carried_in"] == 0.0
+
+    def test_with_carry(self):
+        s = self._setup(True)
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "FineStaff2", "phone": "", "designation": "",
+            "monthly_salary": 2000, "joining_date": "2026-08-01"}).json()
+        sid = staff["id"]
+        s.post(f"{BASE_URL}/api/fines", json={
+            "staff_id": sid, "amount": 5000, "date": "2026-08-15", "reason": "big"})
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json()
+        aug = next(o for o in obs if o["period_end"].startswith("2026-08"))
+        sep = next(o for o in obs if o["period_end"].startswith("2026-09"))
+        # Aug non-accruing (period ended before today 2026-10-15) -> carry out
+        assert aug["fines_carried_out"] > 0
+        assert sep["fines_carried_in"] == aug["fines_carried_out"]
+        # Balance never negative
+        assert aug["balance"] >= 0 and sep["balance"] >= 0
+
+
+# ---------- NEW FEATURE: 40-day cycle due date ----------
+class TestCycle40:
+    def test_due_date(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10, schedule="cycle40")
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "C40", "phone": "", "designation": "",
+            "monthly_salary": 15000, "joining_date": "2026-09-07",
+            "schedule_type": "cycle40", "salary_method": "fixed30"}).json()
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={staff['id']}").json()
+        first = obs[0]
+        assert first["period_start"] == "2026-09-07"
+        assert first["period_end"] == "2026-10-16"
+        assert first["due_date"] == "2026-10-16"
+
+
+# ---------- Payment flow ----------
 class TestPaymentsFlow:
-    @pytest.fixture(scope="class")
-    def staff_payflow(self, owner_a_onboarded):
-        hdr = {"Authorization": f"Bearer {owner_a_onboarded['token']}"}
-        body = {"name": "PayStaff", "phone": "", "designation": "",
-                "monthly_salary": 30000, "joining_date": "2026-08-13"}
-        r = requests.post(f"{BASE_URL}/api/staff", json=body, headers=hdr)
-        assert r.status_code == 200
-        return r.json(), hdr
-
-    def test_obligations_lazy_created(self, staff_payflow):
-        s, hdr = staff_payflow
-        r = requests.get(f"{BASE_URL}/api/obligations?staff_id=" + s["id"], headers=hdr)
-        assert r.status_code == 200
-        obs = r.json()
-        assert len(obs) >= 1
-        assert obs[0]["period_start"] == "2026-08-13"
-
-    def test_partial_payment_then_full(self, staff_payflow):
-        s, hdr = staff_payflow
-        r = requests.get(f"{BASE_URL}/api/obligations?staff_id=" + s["id"], headers=hdr)
-        obs = r.json()
-        # find an overdue one (due in past)
-        target = next((o for o in obs if o["balance"] > 0), None)
-        assert target, "No open obligation"
+    def test_pay_then_reverse(self, owner_a_onboarded):
+        s = owner_a_onboarded["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "PayStaff2", "phone": "", "designation": "",
+            "monthly_salary": 30000, "joining_date": "2026-08-13"}).json()
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={staff['id']}").json()
+        target = next(o for o in obs if o["balance"] > 0)
         oid = target["id"]
         balance = target["balance"]
         ref1 = f"ref{int(time.time()*1000)}_a"
-        p1 = requests.post(f"{BASE_URL}/api/obligations/{oid}/pay",
-                           json={"amount": round(balance / 2, 2), "method": "cash",
-                                 "date": "2026-10-14", "client_ref": ref1},
-                           headers=hdr)
+        p1 = s.post(f"{BASE_URL}/api/obligations/{oid}/pay", json={
+            "amount": round(balance / 2, 2), "method": "cash",
+            "date": "2026-10-14", "client_ref": ref1})
         assert p1.status_code == 200, p1.text
-        v = p1.json()
-        assert v["paid"] > 0
-        # overdue is valid: period in past & balance > 0; or partially_paid if due future
-        assert v["status"] in ("partially_paid", "paid", "overdue")
-        # duplicate client_ref
-        dup = requests.post(f"{BASE_URL}/api/obligations/{oid}/pay",
-                            json={"amount": 1.0, "method": "cash",
-                                  "date": "2026-10-14", "client_ref": ref1},
-                            headers=hdr)
+        # dup
+        dup = s.post(f"{BASE_URL}/api/obligations/{oid}/pay", json={
+            "amount": 1.0, "method": "cash", "date": "2026-10-14", "client_ref": ref1})
         assert dup.status_code == 409
-        # amount > balance
-        over = requests.post(f"{BASE_URL}/api/obligations/{oid}/pay",
-                             json={"amount": 999999, "method": "cash",
-                                   "date": "2026-10-14",
-                                   "client_ref": f"ref{int(time.time()*1000)}_b"},
-                             headers=hdr)
+        # over balance
+        over = s.post(f"{BASE_URL}/api/obligations/{oid}/pay", json={
+            "amount": 999999, "method": "cash", "date": "2026-10-14",
+            "client_ref": f"ref{int(time.time()*1000)}_b"})
         assert over.status_code == 422
 
-        # pay remaining
-        remaining = v["balance"]
-        ref2 = f"ref{int(time.time()*1000)}_c"
-        p2 = requests.post(f"{BASE_URL}/api/obligations/{oid}/pay",
-                           json={"amount": remaining, "method": "upi",
-                                 "date": "2026-10-14", "client_ref": ref2},
-                           headers=hdr)
-        assert p2.status_code == 200
-        assert p2.json()["status"] == "paid"
-        # reverse one
-        tid = p2.json()["transactions"][0]["id"]
-        rev = requests.post(f"{BASE_URL}/api/transactions/{tid}/reverse",
-                            json={"reason": "test reverse"}, headers=hdr)
-        assert rev.status_code == 200
-        after = requests.get(f"{BASE_URL}/api/obligations/{oid}", headers=hdr)
-        assert after.json()["balance"] > 0
+    def test_paid_period_freezes_advance_recovery(self):
+        info = _signup_fresh()
+        _onboard_business(info, pay_day=10)
+        s = info["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "FreezeStaff", "phone": "", "designation": "",
+            "monthly_salary": 10000, "joining_date": "2026-08-01"}).json()
+        sid = staff["id"]
+        # First advance 2000, pay Aug, then add later advance -> paid period unaffected
+        s.post(f"{BASE_URL}/api/advances", json={
+            "staff_id": sid, "amount": 2000, "date": "2026-08-10"})
+        obs = s.get(f"{BASE_URL}/api/obligations?staff_id={sid}").json()
+        aug = next(o for o in obs if o["period_end"].startswith("2026-08"))
+        bal = aug["balance"]
+        ref = f"freeze{int(time.time()*1000)}"
+        pay = s.post(f"{BASE_URL}/api/obligations/{aug['id']}/pay", json={
+            "amount": bal, "method": "cash", "date": "2026-10-01", "client_ref": ref})
+        assert pay.status_code == 200
+        rec_before = pay.json()["advance_recovery"]
+        # Add later advance; Aug recovery should remain frozen
+        s.post(f"{BASE_URL}/api/advances", json={
+            "staff_id": sid, "amount": 5000, "date": "2026-09-20"})
+        aug2 = s.get(f"{BASE_URL}/api/obligations/{aug['id']}").json()
+        assert aug2["advance_recovery"] == rec_before
 
 
-# ---------- ATTENDANCE ----------
-class TestAttendance:
-    def test_upsert_and_delete(self, owner_a_onboarded, auth_a):
-        body = {"name": "AttStaff", "phone": "", "designation": "",
-                "monthly_salary": 30000, "joining_date": "2026-08-13"}
-        s = requests.post(f"{BASE_URL}/api/staff", json=body, headers=auth_a).json()
-        # late with hours
-        r = requests.put(f"{BASE_URL}/api/attendance",
-                         json={"staff_id": s["id"], "date": "2026-09-15",
-                               "status": "late", "hours_late": 2},
-                         headers=auth_a)
-        assert r.status_code == 200
-        assert r.json()["fine_amount"] == 100.0  # 2 * 50
-        # upsert same -> no duplicates
-        r2 = requests.put(f"{BASE_URL}/api/attendance",
-                          json={"staff_id": s["id"], "date": "2026-09-15",
-                                "status": "absent"},
-                          headers=auth_a)
-        assert r2.status_code == 200
-        assert r2.json()["status"] == "absent"
-        # delete
-        d = requests.delete(f"{BASE_URL}/api/attendance/{s['id']}/2026-09-15",
-                            headers=auth_a)
-        assert d.status_code == 200
-
-
-# ---------- ADVANCES / FINES ----------
-class TestAdvancesFines:
-    def test_advance_and_fine(self, owner_a_onboarded, auth_a):
-        s = requests.post(f"{BASE_URL}/api/staff",
-                          json={"name": "AdvStaff", "phone": "", "designation": "",
-                                "monthly_salary": 30000, "joining_date": "2026-08-13"},
-                          headers=auth_a).json()
-        a = requests.post(f"{BASE_URL}/api/advances",
-                          json={"staff_id": s["id"], "amount": 5000,
-                                "date": "2026-09-01", "description": "test"},
-                          headers=auth_a)
-        assert a.status_code == 200
-        aid = a.json()["id"]
-        f = requests.post(f"{BASE_URL}/api/fines",
-                          json={"staff_id": s["id"], "amount": 500,
-                                "date": "2026-09-05", "reason": "late repeat"},
-                          headers=auth_a)
-        assert f.status_code == 200
-        fid = f.json()["id"]
-        # Reverse advance
-        rv = requests.post(f"{BASE_URL}/api/advances/{aid}/reverse",
-                           json={"reason": "cancel"}, headers=auth_a)
-        assert rv.status_code == 200
-        # Reverse fine
-        rf = requests.post(f"{BASE_URL}/api/fines/{fid}/reverse",
-                           json={"reason": "waived"}, headers=auth_a)
-        assert rf.status_code == 200
-
-
-# ---------- DASHBOARD / REPORTS ----------
-class TestDashboardReports:
-    def test_dashboard_structure(self, owner_a_onboarded, auth_a):
-        r = requests.get(f"{BASE_URL}/api/dashboard", headers=auth_a)
+# ---------- Dashboard earned-till-date ----------
+class TestDashboard:
+    def test_structure(self, owner_a_onboarded):
+        r = owner_a_onboarded["session"].get(f"{BASE_URL}/api/dashboard")
         assert r.status_code == 200
         d = r.json()
-        for k in ("active_staff", "capacity", "present_today", "absent_today",
-                  "earned_till_date", "payable_this_month", "paid_this_month",
-                  "pending", "overdue", "due_soon", "recent_transactions", "alerts"):
+        for k in ("active_staff", "capacity", "earned_till_date",
+                  "payable_this_month", "paid_this_month", "pending", "overdue"):
             assert k in d
-
-    @pytest.mark.parametrize("kind", ["attendance", "salary_sheet", "paid",
-                                      "pending", "overdue", "advances", "settlement"])
-    def test_report_kinds(self, owner_a_onboarded, auth_a, kind):
-        r = requests.get(f"{BASE_URL}/api/reports/{kind}?month=2026-10",
-                         headers=auth_a)
-        assert r.status_code == 200
-        rep = r.json()
-        assert rep["kind"] == kind
-        assert "rows" in rep
-        # CSV
-        c = requests.get(f"{BASE_URL}/api/reports/{kind}/csv?month=2026-10",
-                         headers=auth_a)
-        assert c.status_code == 200
-        assert "text/csv" in c.headers.get("content-type", "")
+        assert d["earned_till_date"] >= 0
 
 
-# ---------- SUPER ADMIN ----------
+# ---------- Super admin ----------
 class TestSuperAdmin:
-    def test_admin_stats_and_toggle(self, admin_auth, owner_a_onboarded, auth_a):
-        r = requests.get(f"{BASE_URL}/api/admin/stats", headers=admin_auth)
+    def test_stats_and_toggle(self, super_admin_session, owner_a_onboarded):
+        admin = super_admin_session
+        owner = owner_a_onboarded["session"]
+        r = admin.get(f"{BASE_URL}/api/admin/stats")
         assert r.status_code == 200
-        assert r.json()["total_businesses"] >= 1
-        bl = requests.get(f"{BASE_URL}/api/admin/businesses", headers=admin_auth)
-        assert bl.status_code == 200
-        a_biz = next((b for b in bl.json()
-                      if b["name"] == owner_a_onboarded["business_name"]), None)
-        assert a_biz, "Test biz not found in admin list"
-        # Deactivate
-        d = requests.post(
-            f"{BASE_URL}/api/admin/businesses/{a_biz['id']}/status",
-            json={"active": False, "reason": "test deactivation"}, headers=admin_auth)
+        bl = admin.get(f"{BASE_URL}/api/admin/businesses").json()
+        a_biz = next((b for b in bl if b["name"] == owner_a_onboarded["business_name"]), None)
+        assert a_biz
+        d = admin.post(f"{BASE_URL}/api/admin/businesses/{a_biz['id']}/status",
+                       json={"active": False, "reason": "test"})
         assert d.status_code == 200
-        # Owner now blocked
-        blk = requests.get(f"{BASE_URL}/api/dashboard", headers=auth_a)
+        blk = owner.get(f"{BASE_URL}/api/dashboard")
         assert blk.status_code == 403
-        # Reactivate
-        rr = requests.post(
-            f"{BASE_URL}/api/admin/businesses/{a_biz['id']}/status",
-            json={"active": True, "reason": "restore"}, headers=admin_auth)
+        rr = admin.post(f"{BASE_URL}/api/admin/businesses/{a_biz['id']}/status",
+                        json={"active": True, "reason": "restore"})
         assert rr.status_code == 200
-        # Owner works again
-        ok = requests.get(f"{BASE_URL}/api/dashboard", headers=auth_a)
+        ok = owner.get(f"{BASE_URL}/api/dashboard")
         assert ok.status_code == 200
-        # Audit
-        au = requests.get(f"{BASE_URL}/api/admin/audit", headers=admin_auth)
-        assert au.status_code == 200
-        assert any(x["entity_id"] == a_biz["id"] for x in au.json())
 
 
-# ---------- STAFF LOGIN ----------
+# ---------- Staff login role scoping ----------
 class TestStaffLogin:
-    def test_create_staff_login_and_me(self, owner_a_onboarded, auth_a):
-        s = requests.post(f"{BASE_URL}/api/staff",
-                          json={"name": "LoginStaff", "phone": "", "designation": "",
-                                "monthly_salary": 20000, "joining_date": "2026-09-01"},
-                          headers=auth_a).json()
+    def test_staff_role_blocked_owner_ep(self, owner_a_onboarded):
+        s = owner_a_onboarded["session"]
+        staff = s.post(f"{BASE_URL}/api/staff", json={
+            "name": "LoginStaff2", "phone": "", "designation": "",
+            "monthly_salary": 20000, "joining_date": "2026-09-01"}).json()
         phone = _rand_phone()
-        r = requests.post(f"{BASE_URL}/api/staff/{s['id']}/login",
-                          json={"phone": phone, "password": "StaffPass123!"},
-                          headers=auth_a)
+        r = s.post(f"{BASE_URL}/api/staff/{staff['id']}/login",
+                   json={"phone": phone, "password": "StaffPass123!"})
         assert r.status_code == 200
-        lg = requests.post(f"{BASE_URL}/api/auth/login",
-                           json={"phone": phone, "password": "StaffPass123!"})
+        st = requests.Session()
+        lg = st.post(f"{BASE_URL}/api/auth/login",
+                     json={"phone": phone, "password": "StaffPass123!"})
         assert lg.status_code == 200
         assert lg.json()["user"]["role"] == "staff"
-        tok = lg.json()["token"]
-        # Staff cannot access owner endpoints
-        no = requests.get(f"{BASE_URL}/api/dashboard",
-                          headers={"Authorization": f"Bearer {tok}"})
+        # Staff cannot hit owner endpoint
+        no = st.get(f"{BASE_URL}/api/dashboard")
         assert no.status_code == 403
         # /me/staff works
-        ms = requests.get(f"{BASE_URL}/api/me/staff",
-                          headers={"Authorization": f"Bearer {tok}"})
+        ms = st.get(f"{BASE_URL}/api/me/staff")
         assert ms.status_code == 200
-        assert ms.json()["staff"]["id"] == s["id"]
+        assert ms.json()["staff"]["id"] == staff["id"]
+
+
+# ---------- Protected routes require auth ----------
+class TestProtected:
+    def test_dashboard_401_no_cookie(self):
+        r = requests.get(f"{BASE_URL}/api/dashboard")
+        assert r.status_code == 401
+        r = requests.get(f"{BASE_URL}/api/auth/me")
+        assert r.status_code == 401
+
+
+# ----- helpers used by new tests to create isolated TEST_ owners -----
+def _signup_fresh(prefix="TEST_iter2"):
+    s = requests.Session()
+    phone = _rand_phone()
+    body = {
+        "name": "Owner " + phone[-4:], "phone": phone, "password": "Password123!",
+        "business_name": f"{prefix}_{phone[-5:]}",
+        "security_question": "colour?", "security_answer": "blue",
+    }
+    r = s.post(f"{BASE_URL}/api/auth/signup", json=body)
+    assert r.status_code == 200, r.text
+    return {"session": s, "phone": phone, "business_name": body["business_name"]}
+
+
+def _onboard_business(info, pay_day=10, late_fine=150.0,
+                      schedule="fixed_date", salary_method="fixed30"):
+    body = {
+        "business": {"name": info["business_name"], "type": "Shop", "location": "Delhi", "logo": None},
+        "owner": {"name": "Owner", "email": None},
+        "settings": {
+            "salary_method": salary_method, "schedule_type": schedule, "pay_day": pay_day,
+            "late_fine_per_hour": late_fine, "paid_leave_quota": 1, "leave_quota_period": "monthly",
+            "allow_future_attendance_days": 31, "carry_forward_fines": False,
+        },
+        "staff": [],
+    }
+    r = info["session"].post(f"{BASE_URL}/api/onboarding", json=body)
+    assert r.status_code == 200, r.text

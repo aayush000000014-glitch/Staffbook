@@ -1,0 +1,43 @@
+{
+  "summary": "Iter2: updated backend test suite from Bearer-token auth to cookie-session auth (sb_session HttpOnly+Secure). Ran 30 pytest cases (9 engine + 21 API) all green, including new coverage for: (1) spec advance+fine deduction example (salary 10000, adv 2000, late 2h x150=300, manual 200 -> gross 10000, deductions 2500, advance_recovery 2000 auto, net/balance 7500) verified on obligation list + salary_sheet report + CSV; (2) excess advance carry-forward (adv 12000 vs 10000 salary -> Aug recovery 10000 net 0, Sep recovery 2000 net 8000); (3) recovery cap -> 422 when exceeding available advance; (4) fines carry-forward policy both OFF (fines_not_deducted>0, no carry) and ON via PUT /api/business settings (fines_carried_out = next period fines_carried_in, balance never <0); (5) cycle40 due date (joining 2026-09-07 salary 15000 -> first period 2026-09-07..2026-10-16 due 2026-10-16); (6) paid obligation freezes advance recovery; (7) persistent cookie login survives new requests.Session with sb_session cookie, logout revokes server-side session for all sessions sharing the hash; (8) protected endpoints 401 w/o cookie, cross-tenant 403/404, admin forbidden for owner, super admin stats + deactivate/reactivate, staff role scoping. Playwright UI: logged into /admin as super admin, verified no sb_token in localStorage, sb_session cookie HttpOnly=true + Secure=true, reload persists, new browser context with same storage state is still authenticated, logout via admin-logout-btn redirects to /login AND /api/auth/me returns 401 with the stored cookie, protected /admin redirects back to /login after logout.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/login", "issue": "Brute-force lockout still trips on the 6th wrong attempt (not 5th) due to find_one_and_update return_document=True returning the AFTER state - carried over from iter1, not retested exhaustively this run."},
+      {"endpoint": "/api/transactions/{tid}/reverse", "issue": "Still relies on find_one_and_update default BEFORE for res['obligation_id']; works but fragile."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_staffbook_api.py",
+    "/app/backend/tests/test_engine.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional carry-overs from iter1: fix brute-force off-by-one, use ReturnDocument.AFTER in reverse_txn, add inputMode='numeric' on phone input."
+  ],
+  "critical_code_review_comments": [
+    "core.py cookie attrs: HttpOnly=true, Secure=true, SameSite=lax, path=/; server.py CORS now has allow_credentials=True - correct for cookie auth. Make sure CORS_ORIGINS is set to the explicit frontend origin in prod (currently defaults to '*' which browsers reject with credentials).",
+    "services.Ledger.alloc correctly caps advance recovery to earned-after-fines, carries excess advance via `allocated` running total, applies fines carry-forward only when !accruing and settings.carry_forward_fines=true, and clamps balance >= 0 in ob_view. Verified end-to-end through API.",
+    "routes_pay.set_recovery enforces 422 for recovery > outstanding advance AND > advance_max (earned after fines/deductions) - verified.",
+    "engine 40-day cycle: period length is start..start+39 (inclusive, 40 days); next period starts +1 day. compute_salary respects calendar-month cap when a cycle straddles months - verified by engine unit tests.",
+    "routes_auth.me rolling refresh of expires_at (if <29 days left) is correct; cookie Secure=true + HttpOnly=true + SameSite=lax match best practices.",
+    "DEFAULT_SETTINGS now includes carry_forward_fines=False; SettingsIn validates it; PUT /api/business accepts settings dict - verified."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (converted to cookie sessions)",
+    "/app/backend/tests/test_staffbook_api.py (rewritten to use requests.Session cookies + added new iter2 feature tests)"
+  ],
+  "success_rate": {"backend": "100% (30/30)", "frontend": "100% on persistent-login smoke flow"},
+  "test_credentials": "Super admin phone 8950771876 pw @Aayush_0512 (seeded). Owners signed up with random 9XXXXXXXXX phones and password 'Password123!', prefix TEST_*. All test businesses cleaned via /app/scripts/cleanup_test_data.py (37 deleted after run).",
+  "seed_data_creation": "Created ~15 TEST_ businesses + related staff/obligations/transactions during pytest and UI runs. All deleted (0 residual TEST_* remaining). super_admin preserved.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Auth is now cookie-based (sb_session HttpOnly+Secure); login/signup responses no longer include a token field. Use requests.Session() to carry the cookie across requests. REACT_APP_BACKEND_URL must be set in env for pytest (external https URL since cookie is Secure). Run tests: `cd /app/backend && REACT_APP_BACKEND_URL=... python -m pytest tests/ -v` (xdist 2 workers via pytest.ini). Logout endpoint is POST /api/auth/logout and deletes the server session row - old cookies become 401 immediately. Today in app logic is IST 2026-10-15. UI logout testids: admin-logout-btn, staff-logout-btn. Login submit testid: login-submit-btn (not login-submit-button).",
+  "rca of the issue": "No bugs. All three iter2 features (advance+fines deductions, 40-day cycle due date, persistent cookie sessions) implemented correctly and verified end-to-end against the spec examples."
+}

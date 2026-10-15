@@ -7,7 +7,7 @@ BUILD STAFFBOOK — COMPLETE STAFF MANAGEMENT SAAS. A complete, functional, mobi
 - Mobile (+91) + password, JWT sessions · MongoDB with server-side tenant isolation · Security-question password recovery · Images as base64 (<1MB) in DB · Super admin from env (8950771876).
 
 ## Architecture
-- Stack: React 19 (CRA + Tailwind + shadcn) · FastAPI · MongoDB (Motor). Auth: custom JWT (PyJWT, bcrypt), Bearer token in localStorage, 7-day expiry.
+- Stack: React 19 (CRA + Tailwind + shadcn) · FastAPI · MongoDB (Motor). Auth: server-side sessions in an HttpOnly cookie (sb_session, 30 days), revocable.
 - Backend modules: core.py (db, auth deps, owner_ctx/member_ctx/admin_user, audit), engine.py (pure salary/schedule math), services.py (Ledger, obligation sync, staff creation with atomic 100-limit counter), routes_auth/business/staff/pay/reports/admin.py.
 - Collections: users, businesses (settings embedded, active_staff_count), memberships, staff, attendance (unique staff_id+date), obligations (unique staff_id+period_start; snapshot salary/method), transactions (unique client_ref; valid/reversed), advances, advance_recoveries (unique obligation_id), fines, audit_logs, notifications (unique key), login_attempts.
 - Tenant isolation: every owner query filtered by business_id from server-side membership; deactivated businesses blocked in dependency.
@@ -21,6 +21,12 @@ Business owner (daily use on phone), Staff (read-only own salary), Super Admin (
 - All milestones 1–5 + responsive UI; 8 engine unit tests + 23 API tests (backend/tests) passing; testing agent iteration_1: 100% backend, UI smoke pass.
 - PDF = browser print / Save as PDF of report page (no server PDF).
 - Known limitations: MongoDB standalone (no multi-doc transactions; integrity via unique indexes + atomic updates + version lock); no OTP (by design); staff password reset is done by owner; recovery/question endpoint reveals whether a number is registered.
+
+## Update 2026-10-15
+- Automatic deductions: Ledger.alloc walks each staff's periods in order: fines, other deductions, then advance recovery, never above earned salary. Extra advance carries forward. Extra fines carry forward only if the carry_forward_fines setting is on. A payment freezes that period's recovery.
+- Cycle due date = last day of the cycle (40-day: 7 Sep → due 16 Oct). A startup migration fixed existing cycle obligations. Within one calendar month, fixed30 earnings are capped at the monthly salary.
+- Auth: revocable server sessions in an HttpOnly, Secure, SameSite=Lax cookie sb_session (30 days, sliding). No token in localStorage. Logout deletes the session.
+- Tests: iteration_2 — 30/30 backend tests passed; persistent-login UI flow passed.
 
 ## Backlog
 - P1: Server-generated PDF files; rehire former staff; bulk attendance for all staff on a date.
